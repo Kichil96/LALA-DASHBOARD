@@ -115,15 +115,31 @@ function buildMockData() {
 buildMockData();
 
 async function loadLiveData() {
+  // Try single fullData call (optimized path)
   const data = await apiFetch('fullData');
-  if (!data) return false;
-  MOCK.classes = data.classes || MOCK.classes;
-  MOCK.subjects = {};
-  for (const cid of CLASS_IDS) {
-    MOCK.subjects[cid] = getSubjectsForClass(cid);
+  if (data && data.students && data.summaries) {
+    MOCK.classes = data.classes || MOCK.classes;
+    MOCK.students = data.students;
+    MOCK.summary = data.summaries;
+    return true;
   }
-  MOCK.students = data.students || {};
-  MOCK.summary = data.summaries || {};
+  // Fallback: fetch individual pieces
+  const stats = await apiFetch('stats');
+  if (!stats) return false;
+  MOCK.classes = stats.classes || MOCK.classes;
+  MOCK.students = {};
+  MOCK.summary = {};
+  for (const cid of CLASS_IDS) {
+    MOCK.students[cid] = { pertengahan: [], akhir: [] };
+    const pt = await apiFetch('students', { class: cid, period: 'pertengahan' });
+    const ak = await apiFetch('students', { class: cid, period: 'akhir' });
+    if (pt) MOCK.students[cid].pertengahan = pt;
+    if (ak) MOCK.students[cid].akhir = ak;
+  }
+  for (const sub of Object.keys(SUBJ_COLORS)) {
+    const summary = await apiFetch('summary', { subject: sub });
+    if (summary) MOCK.summary[sub] = summary;
+  }
   return true;
 }
 
@@ -776,48 +792,66 @@ function generateReport() {
   document.getElementById('rvSubtitle').textContent = `${periodLabel} ${YEAR} — SK Sungai Damit`;
   document.getElementById('rvDate').textContent = new Date().toLocaleDateString('ms-MY', { day: 'numeric', month: 'long', year: 'numeric' });
 
-  let totalStudents = 0, totalTP3 = 0, totalAll = 0;
-  const classStats = [];
-  for (const cid of selectedClasses) {
-    const students = MOCK.students[cid]?.[period] || [];
-    const subs = MOCK.subjects[cid] || [];
-    const filteredSubs = subjekFilter ? subs.filter(s => s === subjekFilter) : subs;
-    let tp3 = 0, allCount = 0;
-    for (const s of students) {
-      for (const sub of filteredSubs) {
+  // Compute per-subject stats across selected classes
+  const allSubjects = Object.keys(SUBJ_COLORS);
+  const subjectStats = {};
+  let grandTotalStudents = 0;
+
+  for (const sub of allSubjects) {
+    const counts = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 };
+    let total = 0;
+    const studentSet = new Set();
+    for (const cid of selectedClasses) {
+      const students = MOCK.students[cid]?.[period] || [];
+      const subs = MOCK.subjects[cid] || [];
+      if (!subs.includes(sub)) continue;
+      for (const s of students) {
+        studentSet.add(s.name);
         const tp = s.subjects[sub];
-        if (tp) { allCount++; if (['TP3','TP4','TP5','TP6'].includes(tp)) tp3++; }
+        if (tp && counts[tp] !== undefined) { counts[tp]++; total++; }
       }
     }
-    totalStudents += students.length;
-    totalTP3 += tp3;
-    totalAll += allCount;
-    classStats.push({
-      name: MOCK.classes.find(c => c.id === cid)?.name || cid,
-      students: students.length,
-      tp3to6: tp3,
-      total: allCount,
-      pct: allCount > 0 ? Math.round(tp3 / allCount * 100) : 0
-    });
+    const tp12 = counts.TP1 + counts.TP2;
+    const tp36 = counts.TP3 + counts.TP4 + counts.TP5 + counts.TP6;
+    subjectStats[sub] = {
+      counts,
+      total,
+      bilMurid: studentSet.size,
+      tp12, tp12Pct: total > 0 ? Math.round(tp12 / total * 100) : 0,
+      tp36, tp36Pct: total > 0 ? Math.round(tp36 / total * 100) : 0
+    };
+    grandTotalStudents += studentSet.size;
   }
 
-  const overallPct = totalAll > 0 ? Math.round(totalTP3 / totalAll * 100) : 0;
+  const filteredSubjects = subjekFilter ? allSubjects.filter(s => s === subjekFilter) : allSubjects;
+
+  // Aggregate totals for KPI
+  let aggTp36 = 0, aggTotal = 0, aggTp12 = 0;
+  for (const sub of filteredSubjects) {
+    const s = subjectStats[sub];
+    if (s) { aggTp36 += s.tp36; aggTp12 += s.tp12; aggTotal += s.total; }
+  }
+  const overallPct = aggTotal > 0 ? Math.round(aggTp36 / aggTotal * 100) : 0;
 
   document.getElementById('rvTotFac').textContent = selectedClasses.length + ' kelas';
-  document.getElementById('rvAudited').textContent = totalStudents + ' murid';
+  document.getElementById('rvAudited').textContent = aggTotal + ' jumlah TP';
   document.getElementById('rvComp').textContent = overallPct + '%';
-  document.getElementById('rvPend').textContent = '0';
+  document.getElementById('rvPend').textContent = aggTp12;
 
-  // Report donut chart
+  // Reset charts
+  const rvDonut = document.getElementById('rvDonut');
+  const rvBar = document.getElementById('rvBar');
+  if (rvDonut) { Chart.getChart(rvDonut)?.destroy(); }
+  if (rvBar) { Chart.getChart(rvBar)?.destroy(); }
+
   setTimeout(() => {
-    const rvDonut = document.getElementById('rvDonut');
     if (rvDonut) {
       new Chart(rvDonut, {
         type: 'doughnut',
         data: {
           labels: ['TP3-6', 'TP1-2'],
           datasets: [{
-            data: [totalTP3, totalAll - totalTP3],
+            data: [aggTp36, aggTp12],
             backgroundColor: ['#10b981', '#ef4444'],
             borderWidth: 0
           }]
@@ -831,18 +865,22 @@ function generateReport() {
     }
   }, 100);
 
-  // Report bar chart (class comparison)
+  // Subject comparison bar chart
+  const barData = filteredSubjects.map(sub => {
+    const s = subjectStats[sub];
+    return { sub, pct: s ? s.tp36Pct : 0, tp36: s ? s.tp36 : 0, total: s ? s.total : 0 };
+  }).filter(d => d.total > 0);
+
   setTimeout(() => {
-    const rvBar = document.getElementById('rvBar');
     if (rvBar) {
       new Chart(rvBar, {
         type: 'bar',
         data: {
-          labels: classStats.map(c => c.name.replace('Tahun ', 'T').replace(' Gemilang',' G').replace(' Cemerlang',' C')),
+          labels: barData.map(d => d.sub),
           datasets: [{
             label: 'TP3-6%',
-            data: classStats.map(c => c.pct),
-            backgroundColor: classStats.map(() => '#3b82f6'),
+            data: barData.map(d => d.pct),
+            backgroundColor: barData.map(d => SUBJ_COLORS[d.sub] || '#3b82f6'),
             borderRadius: 4
           }]
         },
@@ -857,17 +895,46 @@ function generateReport() {
     }
   }, 100);
 
-  // Report table
-  document.getElementById('rvTableBody').innerHTML = classStats.map(c => `
-    <tr>
-      <td><strong>${c.name}</strong></td>
-      <td>${c.students}</td>
-      <td>${c.total}</td>
-      <td>${c.tp3to6}</td>
-      <td>${c.total - c.tp3to6}</td>
-      <td><strong>${c.pct}%</strong></td>
-    </tr>
-  `).join('');
+  // Report table — per subject with full TP breakdown
+  const tpKeys = ['TP1','TP2','TP3','TP4','TP5','TP6'];
+  document.getElementById('rvTableBody').innerHTML = filteredSubjects.map(sub => {
+    const s = subjectStats[sub];
+    if (!s || s.total === 0) return '';
+    return `<tr>
+      <td><strong>${sub}</strong></td>
+      <td>${s.total}</td>
+      ${tpKeys.map(tp => `
+        <td>${s.counts[tp]}</td>
+        <td>${Math.round(s.counts[tp] / s.total * 100)}%</td>
+      `).join('')}
+      <td><strong>${s.tp12}</strong></td>
+      <td><strong>${s.tp12Pct}%</strong></td>
+      <td><strong>${s.tp36}</strong></td>
+      <td><strong>${s.tp36Pct}%</strong></td>
+    </tr>`;
+  }).join('');
+
+  // Totals row
+  const totalCounts = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 };
+  for (const sub of filteredSubjects) {
+    const s = subjectStats[sub];
+    if (s) for (const tp of tpKeys) totalCounts[tp] += s.counts[tp];
+  }
+  const tot12 = totalCounts.TP1 + totalCounts.TP2;
+  const tot36 = totalCounts.TP3 + totalCounts.TP4 + totalCounts.TP5 + totalCounts.TP6;
+  const totAll = tot12 + tot36;
+  document.getElementById('rvTableBody').innerHTML += `<tr style="font-weight:800;background:#f1f5f9">
+    <td>JUMLAH</td>
+    <td>${totAll}</td>
+    ${tpKeys.map(tp => `
+      <td>${totalCounts[tp]}</td>
+      <td>${totAll > 0 ? Math.round(totalCounts[tp] / totAll * 100) : 0}%</td>
+    `).join('')}
+    <td>${tot12}</td>
+    <td>${totAll > 0 ? Math.round(tot12 / totAll * 100) : 0}%</td>
+    <td>${tot36}</td>
+    <td>${totAll > 0 ? Math.round(tot36 / totAll * 100) : 0}%</td>
+  </tr>`;
 }
 
 function closeReport() {

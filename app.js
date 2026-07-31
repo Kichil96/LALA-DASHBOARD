@@ -33,12 +33,31 @@ function isUpper(c) {
   return c.startsWith('TAHUN 5') || c.startsWith('TAHUN 6');
 }
 function getSubjectsForClass(cid) { return isUpper(cid) ? PER_CLASS_UPPER : PER_CLASS_LOWER; }
-const YEAR = '2025';
-const API_BASE = 'https://script.google.com/macros/s/AKfycbwwEbWXW79OUOGFIIUUxgJIg8yNcH2udPIUYmylunqV40IM388SF2msDxh77khlfxzWgA/exec';
+
+let YEAR = '2025'; // resolved from API at startup
+
+// Dynamic helpers — prefer live API data, fall back to static lists.
+function getAllSubjects() {
+  if (MOCK.subjectList && MOCK.subjectList.length) return MOCK.subjectList;
+  return Object.keys(SUBJ_COLORS);
+}
+function getClassSubjects(cid, period) {
+  const cs = MOCK.classSubjects?.[cid];
+  if (cs) {
+    if (period && cs[period]?.length) return cs[period];
+    const union = [...new Set([...(cs.pertengahan || []), ...(cs.akhir || [])])];
+    if (union.length) return union;
+  }
+  if (MOCK.subjects?.[cid]?.length) return MOCK.subjects[cid];
+  return getSubjectsForClass(cid);
+}
+function subjColor(sub) { return SUBJ_COLORS[sub] || '#6366f1'; }
+const API_BASE = 'https://script.google.com/macros/s/AKfycbxy-CNgFYhiNO2fusyUffErsJIBhb-4pFWNjagLUVJNZbMX954_jnQo3sDys-T_iV4/exec';
 
 async function apiFetch(action, params = {}) {
   const url = new URL(API_BASE);
   url.searchParams.set('action', action);
+  if (action !== 'years') url.searchParams.set('year', YEAR);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   try {
     const res = await fetch(url.toString());
@@ -115,12 +134,22 @@ function buildMockData() {
 buildMockData();
 
 async function loadLiveData() {
+  // Resolve available years and current year from the backend
+  const years = await apiFetch('years');
+  if (years && years.length) {
+    S.years = years;
+    if (!years.includes(S.year)) S.year = years[years.length - 1];
+    YEAR = S.year;
+    renderYearSelector();
+  }
   // Try single fullData call (optimized path)
   const data = await apiFetch('fullData');
   if (data && data.students && data.summaries) {
     MOCK.classes = data.classes || MOCK.classes;
     MOCK.students = data.students;
     MOCK.summary = data.summaries;
+    MOCK.subjectList = data.subjectList;
+    MOCK.classSubjects = data.classSubjects;
     return true;
   }
   // Fallback: fetch individual pieces
@@ -136,7 +165,7 @@ async function loadLiveData() {
     if (pt) MOCK.students[cid].pertengahan = pt;
     if (ak) MOCK.students[cid].akhir = ak;
   }
-  for (const sub of Object.keys(SUBJ_COLORS)) {
+  for (const sub of getAllSubjects()) {
     const summary = await apiFetch('summary', { subject: sub });
     if (summary) MOCK.summary[sub] = summary;
   }
@@ -158,6 +187,7 @@ const S = {
   page: 'rumusan',
   period: 'akhir',
   year: YEAR,
+  years: [YEAR],
   subject: null,
   kelas: null,
   studentSearch: '',
@@ -199,14 +229,14 @@ function renderRumusan() {
   container.innerHTML = '<div class="loading"><div class="spin"></div><div>Memuat data...</div></div>';
 
   setTimeout(() => {
-    const allSubjects = Object.keys(SUBJ_COLORS);
+    const allSubjects = getAllSubjects();
     const classes = MOCK.classes;
     let totalStudents = 0, tp3Total = 0, grandTotal = 0;
     for (const c of classes) {
       const cid = c.id;
       const students = MOCK.students[cid]?.[S.period] || [];
       totalStudents += students.length;
-      const subs = MOCK.subjects[cid] || [];
+      const subs = getClassSubjects(cid, S.period);
       for (const s of students) {
         for (const sub of subs) {
           const tp = s.subjects[sub];
@@ -222,8 +252,10 @@ function renderRumusan() {
     let html = `
       <div class="school-header">
         <img src="logo-sk-sg-damit.png" alt="SK Sungai Damit" onerror="this.style.display='none'">
-        <h1>SEKOLAH KEBANGSAAN SUNGAI DAMIT</h1>
-        <div class="sub">TUARAN, SABAH &nbsp;·&nbsp; Analisis PBD ${YEAR} &nbsp;·&nbsp; ${S.period === 'akhir' ? 'AKHIR TAHUN' : 'PERTENGAHAN TAHUN'}</div>
+        <div>
+          <h1>SEKOLAH KEBANGSAAN SUNGAI DAMIT</h1>
+          <div class="sub">TUARAN, SABAH &nbsp;·&nbsp; Analisis PBD ${YEAR} &nbsp;·&nbsp; ${S.period === 'akhir' ? 'AKHIR TAHUN' : 'PERTENGAHAN TAHUN'}</div>
+        </div>
       </div>
       <div class="kpi-row">
         <div class="kpi blue">
@@ -287,7 +319,7 @@ function renderRumusanCharts(filterSubject) {
   rumusanCharts = [];
   const period = S.period;
   const classes = MOCK.classes;
-  const allSubjects = Object.keys(SUBJ_COLORS);
+  const allSubjects = getAllSubjects();
 
   // Bar chart
   const barCtx = document.getElementById('rumusan-bar-chart');
@@ -295,7 +327,7 @@ function renderRumusanCharts(filterSubject) {
     const labels = classes.map(c => c.name.replace('Tahun ', 'T').replace(' Gemilang', ' G').replace(' Cemerlang', ' C'));
     const data = classes.map(c => {
       let total = 0, tp3 = 0;
-      const subs = MOCK.subjects[c.id] || [];
+      const subs = getClassSubjects(c.id, S.period);
       for (const sub of subs) {
         const d = MOCK.summary[sub]?.[period]?.[c.id];
         if (d) { total += d.total; tp3 += d.tp3to6; }
@@ -386,13 +418,13 @@ function renderRumusanCharts(filterSubject) {
 function renderRumusanCards(filterSubject) {
   const container = document.getElementById('rumusan-subj-cards');
   if (!container) return;
-  const allSubjects = Object.keys(SUBJ_COLORS);
+  const allSubjects = getAllSubjects();
   const subjects = filterSubject ? [filterSubject] : allSubjects;
   const period = S.period;
 
   let html = '';
   for (const sub of subjects) {
-    const color = SUBJ_COLORS[sub];
+    const color = subjColor(sub);
     const classes = MOCK.classes;
     let totalAll = 0, tp3All = 0;
     for (const c of classes) {
@@ -441,7 +473,7 @@ let subjekCharts = [];
 
 function renderSubjek() {
   const container = document.getElementById('subjek-content');
-  const allSubjects = Object.keys(SUBJ_COLORS);
+  const allSubjects = getAllSubjects();
   const currentSub = S.subject || allSubjects[0];
 
   let html = `
@@ -461,7 +493,7 @@ function renderSubjek() {
     <div class="charts-row">
       <div class="card">
         <div class="card-t">
-          <span style="color:${SUBJ_COLORS[currentSub]}">${currentSub}</span>
+          <span style="color:${subjColor(currentSub)}">${currentSub}</span>
           <span class="card-badge">TP3-6% mengikut Kelas</span>
         </div>
         <div class="card-s">Peratusan murid mencapai TP3 hingga TP6 bagi setiap kelas</div>
@@ -594,7 +626,7 @@ function renderSubjekCharts(sub) {
         <td><span class="tp-badge tp-4">${c.d.counts.TP4}</span></td>
         <td><span class="tp-badge tp-5">${c.d.counts.TP5}</span></td>
         <td><span class="tp-badge tp-6">${c.d.counts.TP6}</span></td>
-        <td><strong style="color:${SUBJ_COLORS[sub]}">${c.d.tp3to6Pct}%</strong></td>
+        <td><strong style="color:${subjColor(sub)}">${c.d.tp3to6Pct}%</strong></td>
       </tr>
     `).join('');
   }
@@ -645,7 +677,7 @@ function renderKelasKPI(cid) {
   const container = document.getElementById('kelas-kpi');
   if (!container) return;
   const students = MOCK.students[cid]?.[S.period] || [];
-  const subs = MOCK.subjects[cid] || [];
+  const subs = getClassSubjects(cid, S.period);
   let totalTP = 0, tp3count = 0;
   for (const s of students) {
     for (const sub of subs) {
@@ -667,7 +699,7 @@ function renderKelasKPI(cid) {
 function renderKelasTable(cid) {
   cid = cid || S.kelas || MOCK.classes[0]?.id;
   const students = MOCK.students[cid]?.[S.period] || [];
-  const subs = MOCK.subjects[cid] || [];
+  const subs = getClassSubjects(cid, S.period);
   const search = S.studentSearch.toLowerCase();
   const filtered = search ? students.filter(s => s.name.toLowerCase().includes(search)) : students;
 
@@ -699,7 +731,7 @@ function showStudentDetail(cid, name) {
   const aStudents = MOCK.students[cid]?.akhir || [];
   const pS = pStudents.find(s => s.name === name);
   const aS = aStudents.find(s => s.name === name);
-  const subs = MOCK.subjects[cid] || [];
+  const subs = getClassSubjects(cid);
 
   const modal = document.getElementById('studentModal');
   document.getElementById('studentModalTitle').textContent = name;
@@ -742,7 +774,7 @@ function closeStudentModal() {
 function renderLaporan() {
   const container = document.getElementById('laporan-content');
   const classes = MOCK.classes;
-  const allSubjects = Object.keys(SUBJ_COLORS);
+  const allSubjects = getAllSubjects();
 
   let html = `
     <div class="page-header">
@@ -793,7 +825,7 @@ function generateReport() {
   document.getElementById('rvDate').textContent = new Date().toLocaleDateString('ms-MY', { day: 'numeric', month: 'long', year: 'numeric' });
 
   // Compute per-subject stats across selected classes
-  const allSubjects = Object.keys(SUBJ_COLORS);
+  const allSubjects = getAllSubjects();
   const subjectStats = {};
   let grandTotalStudents = 0;
 
@@ -803,7 +835,7 @@ function generateReport() {
     const studentSet = new Set();
     for (const cid of selectedClasses) {
       const students = MOCK.students[cid]?.[period] || [];
-      const subs = MOCK.subjects[cid] || [];
+      const subs = getClassSubjects(cid, period);
       if (!subs.includes(sub)) continue;
       for (const s of students) {
         studentSet.add(s.name);
@@ -941,14 +973,261 @@ function closeReport() {
   document.getElementById('reportOverlay').classList.remove('open');
 }
 
+// ====== EJEN PBD (Offline QA) ======
+const SUGGESTIONS = [
+  'Jumlah murid keseluruhan',
+  'Senarai kelas',
+  'Peratus TP3-6 tertinggi',
+  'Subjek paling ramai TP1',
+  'Purata TP3-6 semua subjek',
+  'Perbandingan TP3-6 BM dan BI'
+];
+
+function renderEjen() {
+  const container = document.getElementById('ejen-content');
+  container.innerHTML = `
+    <div class="card chat-wrap">
+      <div class="chat-hdr">
+        <h2>🤖 Ejen PBD</h2>
+        <p>Tanya soalan tentang data PBD SK Sungai Damit. Ejen menjawab berdasarkan data semasa.</p>
+      </div>
+      <div class="chat-msgs" id="chatMsgs">
+        <div class="chat-msg bot">👋 Hai! Saya Ejen PBD. Tanya saya apa-apa tentang data prestasi murid.<div class="chat-suggest" id="chatSuggest">${SUGGESTIONS.map(s => `<button onclick="askEjen('${s.replace(/'/g, "\\'")}')">${s}</button>`).join('')}</div></div>
+      </div>
+      <div class="chat-input-wrap">
+        <input class="chat-input" id="chatInput" placeholder="Taip soalan..." onkeydown="if(event.key==='Enter') sendChat()">
+        <button class="chat-send" onclick="sendChat()">➤</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('chatInput')?.focus();
+}
+
+function sendChat() {
+  const input = document.getElementById('chatInput');
+  if (!input) return;
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  addChatMsg('user', q);
+  setTimeout(() => {
+    const a = answerEjen(q);
+    addChatMsg('bot', a);
+  }, 300 + Math.random() * 400);
+}
+
+function addChatMsg(role, text) {
+  const msgs = document.getElementById('chatMsgs');
+  if (!msgs) return;
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + role;
+  div.innerHTML = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function askEjen(q) {
+  addChatMsg('user', q);
+  setTimeout(() => {
+    const a = answerEjen(q);
+    addChatMsg('bot', a);
+  }, 300 + Math.random() * 400);
+}
+
+function answerEjen(q) {
+  const lower = q.toLowerCase();
+  const period = S.period;
+  const periodLabel = period === 'akhir' ? 'Akhir Tahun' : 'Pertengahan Tahun';
+  const classes = MOCK.classes || [];
+  const allSubjects = getAllSubjects();
+
+  // Helper: get summary for a subject
+  function subjSummary(sub) {
+    const summary = MOCK.summary[sub];
+    if (!summary || !summary[period]) return null;
+    const data = summary[period];
+    let total = 0, tp36 = 0, tp12 = 0;
+    const counts = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 };
+    for (const cid of CLASS_IDS) {
+      const c = data[cid];
+      if (c) {
+        total += c.total;
+        tp36 += c.tp3to6;
+        for (const tp of TP_LABELS) counts[tp] += (c.counts[tp] || 0);
+      }
+    }
+    tp12 = total - tp36;
+    return { total, tp36, tp12, tp36Pct: total > 0 ? Math.round(tp36 / total * 100) : 0, tp12Pct: total > 0 ? Math.round(tp12 / total * 100) : 0, counts };
+  }
+
+  // === SOALAN JENIS ===
+
+  // Jumlah murid / berapa murid
+  if (/jumlah\s+murid|berapa\s+murid|bilangan\s+murid|total\s+murid|keseluruhan\s+murid/i.test(q)) {
+    let total = 0;
+    for (const c of classes) total += c.students || 0;
+    return `Jumlah murid keseluruhan: <span class="hl">${total}</span> orang (${periodLabel}).`;
+  }
+
+  // Jumlah kelas
+  if (/jumlah\s+kelas|berapa\s+kelas|bilangan\s+kelas|senarai\s+kelas/i.test(q)) {
+    return `Terdapat <span class="hl">${classes.length}</span> kelas:<br>${classes.map(c => `• ${c.name} (<span class="hl">${c.students}</span> murid)`).join('<br>')}`;
+  }
+
+  // Purata TP3-6 / overall / keseluruhan
+  if (/purata|overall|keseluruhan|prestasi\s+keseluruhan/i.test(q)) {
+    let totalTp36 = 0, totalAll = 0, cnt = 0;
+    for (const sub of allSubjects) {
+      const s = subjSummary(sub);
+      if (s) { totalTp36 += s.tp36; totalAll += s.total; cnt++; }
+    }
+    const pct = totalAll > 0 ? Math.round(totalTp36 / totalAll * 100) : 0;
+    return `Prestasi keseluruhan (${periodLabel}):<br>• TP3-6: <span class="hl">${totalTp36}</span> daripada ${totalAll} (<span class="hl">${pct}%</span>)<br>• TP1-2: ${totalAll - totalTp36} (${100 - pct}%)`;
+  }
+
+  // Subjek tertentu — TP3-6 / peratus / prestasi
+  const subMatch = q.match(/(?:tp3-6|prestasi|peratus|tp|bagaimana)\s+(\w+)/i) || q.match(/(\w{2,4})\s+(?:tp3-6|prestasi|peratus)/i);
+  if (subMatch) {
+    const sub = subMatch[1].toUpperCase();
+    if (allSubjects.includes(sub)) {
+      const s = subjSummary(sub);
+      if (s) {
+        return `${sub} (${periodLabel}):<br>• Jumlah dinilai: <span class="hl">${s.total}</span><br>• TP3-6: ${s.tp36} (<span class="hl">${s.tp36Pct}%</span>)<br>• TP1-2: ${s.tp12} (${s.tp12Pct}%)<br>• Pecahan: TP1=${s.counts.TP1} TP2=${s.counts.TP2} TP3=${s.counts.TP3} TP4=${s.counts.TP4} TP5=${s.counts.TP5} TP6=${s.counts.TP6}`;
+      }
+      return `Tiada data ${sub} untuk ${periodLabel}.`;
+    }
+  }
+
+  // TP3-6 tertinggi / terbaik / paling baik
+  if (/tertinggi|terbaik|paling\s+baik|maksimum/i.test(q) && /tp3-6|peratus/i.test(q)) {
+    let best = null, bestSub = '';
+    for (const sub of allSubjects) {
+      const s = subjSummary(sub);
+      if (s && s.total > 0 && (!best || s.tp36Pct > best.tp36Pct)) { best = s; bestSub = sub; }
+    }
+    if (best) return `Subjek dengan TP3-6 tertinggi (${periodLabel}): <span class="hl">${bestSub}</span> — <span class="hl">${best.tp36Pct}%</span> (${best.tp36} daripada ${best.total}).`;
+  }
+
+  // TP3-6 terendah
+  if (/terendah|paling\s+rendah|rendah|minimum/i.test(q) && /tp3-6|peratus/i.test(q)) {
+    let worst = null, worstSub = '';
+    for (const sub of allSubjects) {
+      const s = subjSummary(sub);
+      if (s && s.total > 0 && (!worst || s.tp36Pct < worst.tp36Pct)) { worst = s; worstSub = sub; }
+    }
+    if (worst) return `Subjek dengan TP3-6 terendah (${periodLabel}): <span class="hl">${worstSub}</span> — ${worst.tp36Pct}% (${worst.tp36} daripada ${worst.total}).`;
+  }
+
+  // Perbandingan dua subjek
+  const compareMatch = q.match(/(?:banding|perbandingan|vs|dan)\s+(\w{2,4}).*(\w{2,4})/i);
+  if (compareMatch && /banding|perbandingan|vs/i.test(q)) {
+    const s1 = compareMatch[1].toUpperCase(), s2 = compareMatch[2].toUpperCase();
+    if (allSubjects.includes(s1) && allSubjects.includes(s2)) {
+      const a = subjSummary(s1), b = subjSummary(s2);
+      if (a && b) return `Perbandingan ${s1} vs ${s2} (${periodLabel}):<br>• ${s1}: <span class="hl">${a.tp36Pct}%</span> TP3-6 (${a.tp36}/${a.total})<br>• ${s2}: <span class="hl">${b.tp36Pct}%</span> TP3-6 (${b.tp36}/${b.total})`;
+    }
+  }
+
+  // TP1 / TP1-2 paling ramai
+  if (/tp1|tp1-2/i.test(q) && /paling\s+ramai|terbanyak|tertinggi/i.test(q)) {
+    let top = null, topSub = '';
+    for (const sub of allSubjects) {
+      const s = subjSummary(sub);
+      if (s && s.tp12 > 0 && (!top || s.tp12 > top.tp12)) { top = s; topSub = sub; }
+    }
+    if (top) return `Subjek dengan TP1-2 terbanyak (${periodLabel}): <span class="hl">${topSub}</span> — ${top.tp12} murid (${top.tp12Pct}%).`;
+  }
+
+  // Mengikut kelas — kelas mana tertinggi tp3-6
+  if (/kelas\s+mana|perbandingan\s+kelas|kelas\s+tertinggi/i.test(q)) {
+    let bestClass = null, bestPct = 0;
+    for (const c of classes) {
+      const cid = CLASS_IDS.find(id => id === c.id);
+      if (!cid) continue;
+      const students = MOCK.students[cid]?.[period] || [];
+      const subs = getClassSubjects(cid, period);
+      let tp3 = 0, total = 0;
+      for (const s of students) {
+        for (const sub of subs) {
+          const tp = s.subjects[sub];
+          if (tp) { total++; if (['TP3','TP4','TP5','TP6'].includes(tp)) tp3++; }
+        }
+      }
+      const pct = total > 0 ? Math.round(tp3 / total * 100) : 0;
+      if (pct > bestPct) { bestPct = pct; bestClass = c.name; }
+    }
+    if (bestClass) return `Kelas dengan TP3-6 tertinggi (${periodLabel}): <span class="hl">${bestClass}</span> — <span class="hl">${bestPct}%</span>.`;
+  }
+
+  // Soalan subjek dan TP1 count
+  const subCountMatch = q.match(/(?:berap|jumlah|bilangan|count)\s+(\w{2,4})\s+(?:tp|murid)/i);
+  if (subCountMatch) {
+    const sub = subCountMatch[1].toUpperCase();
+    if (allSubjects.includes(sub)) {
+      const s = subjSummary(sub);
+      if (s) return `${sub} (${periodLabel}): ${s.total} murid dinilai. TP1=${s.counts.TP1}, TP2=${s.counts.TP2}, TP3=${s.counts.TP3}, TP4=${s.counts.TP4}, TP5=${s.counts.TP5}, TP6=${s.counts.TP6}.`;
+    }
+  }
+
+  // Senarai semua subjek
+  if (/senarai\s+subjek|subjek\s+apa|apa\s+subjek/i.test(q)) {
+    return `Subjek yang dinilai (${periodLabel}): ${allSubjects.join(', ')}.`;
+  }
+
+  // Subjek paling ramai TP1
+  if (/paling\s+ramai\s+tp1|tp1\s+terbanyak/i.test(q)) {
+    let top = null, topVal = 0;
+    for (const sub of allSubjects) {
+      const s = subjSummary(sub);
+      if (s && s.counts.TP1 > topVal) { topVal = s.counts.TP1; top = sub; }
+    }
+    if (top) return `Subjek paling ramai TP1 (${periodLabel}): <span class="hl">${top}</span> — ${topVal} murid.`;
+  }
+
+  // Subjek paling ramai TP6
+  if (/paling\s+ramai\s+tp6|tp6\s+terbanyak/i.test(q)) {
+    let top = null, topVal = 0;
+    for (const sub of allSubjects) {
+      const s = subjSummary(sub);
+      if (s && s.counts.TP6 > topVal) { topVal = s.counts.TP6; top = sub; }
+    }
+    if (top) return `Subjek paling ramai TP6 (${periodLabel}): <span class="hl">${top}</span> — ${topVal} murid.`;
+  }
+
+  // Fallback — senarai soalan contoh
+  return `Saya boleh jawab soalan seperti:<br>${SUGGESTIONS.map(s => `• <span class="hl">${s}</span>`).join('<br>')}<br><br>Cuba taip soalan di atas atau klik cadangan.`;
+}
+
+// Register ejen in renderPage
+const origRenderPage = renderPage;
+renderPage = function(page) {
+  if (page === 'ejen') renderEjen();
+  else origRenderPage(page);
+};
+
 function printReport() {
   window.print();
 }
 
 // ====== YEAR SELECTOR ======
-function switchYear(yr) {
+function renderYearSelector() {
+  const wrap = document.getElementById('year-btns');
+  if (!wrap) return;
+  wrap.innerHTML = (S.years || [YEAR]).map(yr =>
+    `<button class="yr-btn${yr === S.year ? ' on' : ''}" data-yr="${yr}" onclick="switchYear('${yr}')">${yr}</button>`
+  ).join('');
+}
+
+async function switchYear(yr) {
+  if (S.year === yr) return;
   S.year = yr;
+  YEAR = yr;
   document.querySelectorAll('.yr-btn').forEach(b => b.classList.toggle('on', b.dataset.yr === yr));
+  const live = await loadLiveData();
+  if (live) {
+    document.getElementById('status-badge').textContent = 'LIVE';
+    document.getElementById('status-badge').style.background = '#22c55e';
+  }
   renderPage(S.page);
 }
 

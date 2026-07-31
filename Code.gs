@@ -1,5 +1,9 @@
-// SETUP: Replace with your actual Sheet ID (from the edit URL)
-const SHEET_ID = '1BSFRUCg9McSOlcdGCqWTbsn_1ePfM3duV2z6lSyfrOk';
+// SETUP: Map of year -> master data Sheet ID (from the share/edit URL).
+// Add a new entry each year; older years remain in history automatically.
+const YEAR_SHEETS = {
+  '2025': '1yMog1g-Ad6huk_QpflsFIE2s6kboMSv6w-YlJqbb0BQ'
+  // '2026': '<paste new sheet ID here>',
+};
 
 const CLASS_SHEETS = [
   'TAHUN 1 GEMILANG', 'TAHUN 2 GEMILANG', 'TAHUN 3 GEMILANG',
@@ -14,27 +18,30 @@ const CLASS_DISPLAY = {
   'TAHUN 6 GEMILANG': 'Tahun 6 Gemilang', 'TAHUN 6 CEMERLANG': 'Tahun 6 Cemerlang'
 };
 
-// All possible subjects found in per-class sheets.
-// Lower years: BM,BI,MM,SAINS,PAI,PM,PMZ,PSV,PJPK,AR,BKD
-// Upper years: BM,BI,MM,SAINS,SEJ,PAI,PM,BKD,RBT,AR,PJPK,PMZ,PSV
-const ALL_SUBJECTS = ['BM','BI','MM','SAINS','SEJ','PAI','PM','PMZ','PSV','PJPK','AR','BKD','RBT'];
-// Summary subject names (PMZ in sheets = MUZIK in UI)
+// Raw subject codes as they appear in sheet headers.
+// Subjects are detected dynamically from the header row; this list is only a
+// fallback set for known codes (PMZ in sheets = MUZIK in the UI).
+const KNOWN_SUBJECTS = ['BM','BI','MM','SAINS','SEJ','PAI','PM','PMZ','PSV','PJPK','AR','BKD','RBT'];
 const SUBJECT_UI_MAP = { 'PMZ': 'MUZIK' };
 
 function doGet(e) {
   const action = e?.parameter?.action || 'stats';
   try {
-    const ss = SpreadsheetApp.openById(SHEET_ID);
+    if (action === 'years') {
+      const years = Object.keys(YEAR_SHEETS).sort();
+      return ContentService.createTextOutput(JSON.stringify({ status: 'ok', data: years }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    const year = resolveYear(e?.parameter?.year);
+    const ss = SpreadsheetApp.openById(year.sheetId);
     let result;
     switch (action) {
       case 'classes': result = getClasses(ss); break;
-      case 'subjects': result = getSubjectList(ss); break;
       case 'students': result = getStudents(ss, e.parameter.class, e.parameter.period); break;
       case 'summary': result = getSummary(ss, e.parameter.subject); break;
-      case 'student': result = getStudentDetail(ss, e.parameter.name, e.parameter.className); break;
-      case 'fullData': result = getFullData(ss); break;
-      case 'stats': default: result = getStats(ss); break;
+      case 'fullData': default: result = getFullData(ss); break;
     }
+    result.year = year.value;
     return ContentService.createTextOutput(JSON.stringify({ status: 'ok', data: result }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
@@ -43,166 +50,210 @@ function doGet(e) {
   }
 }
 
-function isUpper(cid) { return cid.startsWith('TAHUN 5') || cid.startsWith('TAHUN 6'); }
-function getPerClassSubjects(cid) {
-  if (isUpper(cid)) return ['BM','BI','MM','SAINS','SEJ','PAI','PM','BKD','RBT','AR','PJPK','PMZ','PSV'];
-  return ['BM','BI','MM','SAINS','PAI','PM','PMZ','PSV','PJPK','AR','BKD'];
+// Pick the sheet for the requested year; default to the latest available.
+function resolveYear(y) {
+  const years = Object.keys(YEAR_SHEETS).sort();
+  const key = y && YEAR_SHEETS[y] ? String(y) : years[years.length - 1];
+  return { value: key, sheetId: YEAR_SHEETS[key] };
+}
+
+// ---- Gender: prefer BIN/BINTI in name, fall back to sheet value ----
+function fixGender(name, sheetVal) {
+  const n = ' ' + name.toUpperCase() + ' ';
+  if (/\bBINTI\b/.test(n)) return 'P';
+  if (/\bBIN\b/.test(n)) return 'L';
+  const s = String(sheetVal || '').trim().toUpperCase();
+  return s === 'L' || s === 'P' ? s : '';
+}
+
+function uiName(sub) { return SUBJECT_UI_MAP[sub] || sub; }
+
+// Cross-fill gender from the other period when a row lacks it in one section.
+function fillGender(pt, ak) {
+  const index = {};
+  for (const s of ak) index[s.name] = s.gender;
+  for (const s of pt) { if (!s.gender && index[s.name]) s.gender = index[s.name]; }
+  const index2 = {};
+  for (const s of pt) index2[s.name] = s.gender;
+  for (const s of ak) { if (!s.gender && index2[s.name]) s.gender = index2[s.name]; }
+}
+
+// Parse one class sheet into { pertengahan, akhir } sections.
+// Fully dynamic: sections are found from title rows ("PERTENGAHAN"/"AKHIR"),
+// header rows by "Nama" in the name column, and subjects from the actual
+// header row. If a sheet has no PERTENGAHAN title (e.g. Tahun 4), the first
+// header defaults to pertengahan.
+function parseSheet(ss, sheetName) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return null;
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 3) return null;
+  const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+
+  const sections = { pertengahan: [], akhir: [] };
+  const headers = { pertengahan: null, akhir: null };
+  let cur = 'pertengahan';
+
+  for (let r = 0; r < data.length; r++) {
+    const row = data[r];
+    const a = String(row[0]).trim();
+    const au = a.toUpperCase();
+
+    // Title row switches current section
+    if (au.includes('PERTENGAHAN')) { cur = 'pertengahan'; continue; }
+    if (au.includes('AKHIR') && !au.includes('PERTENGAHAN')) { cur = 'akhir'; continue; }
+
+    // Header row: name column contains "Nama"
+    if (String(row[1]).trim().toUpperCase() === 'NAMA') {
+      headers[cur] = readSubjects(row);
+      continue;
+    }
+
+    // Data row: numeric bil + name present
+    if (headers[cur]) {
+      const bil = parseFloat(String(row[0]).replace(/,/g, ''));
+      const name = String(row[1]).trim();
+      if (!isNaN(bil) && name.length >= 2) {
+        const gender = fixGender(name, row[3]);
+        const subjects = {};
+        for (const [code, col] of Object.entries(headers[cur])) {
+          const v = String(row[col]).trim().toUpperCase();
+          if (v.startsWith('TP')) subjects[uiName(code)] = v;
+        }
+        sections[cur].push({ bil, name, gender, subjects });
+      }
+    }
+  }
+  return sections;
+}
+
+// Read subject columns from a header row. Stops at the first blank header or
+// the "ANALISIS" block, so subjects are always read from raw headers.
+function readSubjects(headerRow) {
+  const map = {};
+  for (let c = 4; c < headerRow.length; c++) {
+    const h = String(headerRow[c]).trim().toUpperCase();
+    if (!h) break;
+    if (h === 'ANALISIS' || h === 'ANALISIS:') break;
+    map[h] = c;
+  }
+  return map;
 }
 
 function getClasses(ss) {
   const result = [];
   for (const id of CLASS_SHEETS) {
-    const sheet = ss.getSheetByName(id);
-    if (!sheet) continue;
-    const students = readStudentsFromSheet(sheet, 'pertengahan');
-    let yr = id.match(/\d+/)?.[0] || '';
-    result.push({ id, name: CLASS_DISPLAY[id] || id, students: students.length, year: yr });
+    const sections = parseSheet(ss, id);
+    if (!sections) continue;
+    const pt = sections.pertengahan, ak = sections.akhir;
+    const n = pt.length > 0 ? pt.length : ak.length;
+    result.push({
+      id, name: CLASS_DISPLAY[id] || id, students: n,
+      year: (id.match(/\d+/)?.[0] || ''),
+      subjects: classSubjectList(ss, id)
+    });
   }
   return result;
 }
 
-function getSubjectList(ss) {
+function classSubjectList(ss, id) {
+  const sections = parseSheet(ss, id);
+  if (!sections) return [];
   const set = new Set();
-  for (const id of CLASS_SHEETS) {
-    const sheet = ss.getSheetByName(id);
-    if (!sheet) continue;
-    for (const subj of getPerClassSubjects(id)) {
-      // Map PMZ to UI name
-      set.add(SUBJECT_UI_MAP[subj] || subj);
-    }
+  for (const per of ['pertengahan', 'akhir']) {
+    const hdr = findHeader(ss, id, per);
+    if (hdr) Object.keys(hdr).forEach(s => set.add(uiName(s)));
   }
-  return Array.from(set).sort();
+  return Array.from(set);
 }
 
-// Read student rows from a sheet for a given period
-function readStudentsFromSheet(sheet, period) {
+function findHeader(ss, id, period) {
+  const sheet = ss.getSheetByName(id);
+  if (!sheet) return null;
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
-  if (lastRow < 5) return [];
   const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-  // Find section starts
-  let ptStart = -1, atStart = -1;
+  let cur = 'pertengahan';
   for (let r = 0; r < data.length; r++) {
-    const v = String(data[r][0]).trim().toUpperCase();
-    if (v.includes('PERTENGAHAN')) ptStart = r;
-    if (v.includes('AKHIR') && !v.includes('PERTENGAHAN')) atStart = r;
-  }
-  const sectionStart = period === 'akhir' ? atStart : ptStart;
-  if (sectionStart < 0) return [];
-  // Find header row (contains "Bil." and "Nama")
-  let hdrRow = -1;
-  for (let r = sectionStart + 1; r < Math.min(sectionStart + 5, data.length); r++) {
-    const v = String(data[r][0]).trim().toUpperCase();
-    if (v === 'BIL.' || v === 'BIL') { hdrRow = r; break; }
-  }
-  if (hdrRow < 0) return [];
-  const headers = data[hdrRow];
-  // Map column headers to subject codes
-  const colMap = {};
-  for (let c = 0; c < headers.length; c++) {
-    const h = String(headers[c]).trim().toUpperCase();
-    if (ALL_SUBJECTS.includes(h)) colMap[c] = h;
-  }
-  const students = [];
-  const endRow = period === 'akhir' ? data.length : (atStart > 0 ? atStart - 1 : data.length);
-  for (let r = hdrRow + 1; r < endRow; r++) {
-    const bil = String(data[r][0]).trim();
-    if (!bil || !/^\d+$/.test(bil)) continue;
-    const name = String(data[r][1] || '').trim();
-    if (!name || name.length < 2) continue;
-    const gender = String(data[r][3] || '').trim();
-    const student = { bil: Number(bil), name, gender, subjects: {} };
-    for (const [colIdx, subjCode] of Object.entries(colMap)) {
-      const val = String(data[r][parseInt(colIdx)] || '').trim().toUpperCase();
-      if (val.startsWith('TP')) {
-        // Map PMZ to MUZIK for UI
-        const uiSubj = SUBJECT_UI_MAP[subjCode] || subjCode;
-        student.subjects[uiSubj] = val;
-      }
+    const au = String(data[r][0]).trim().toUpperCase();
+    if (au.includes('PERTENGAHAN')) { cur = 'pertengahan'; continue; }
+    if (au.includes('AKHIR') && !au.includes('PERTENGAHAN')) { cur = 'akhir'; continue; }
+    if (cur === period && String(data[r][1]).trim().toUpperCase() === 'NAMA') {
+      return readSubjects(data[r]);
     }
-    students.push(student);
   }
-  return students;
+  return null;
 }
 
 function getStudents(ss, className, period) {
   if (!className) return [];
-  const sheet = ss.getSheetByName(className);
-  if (!sheet) return [];
-  return readStudentsFromSheet(sheet, period || 'pertengahan');
+  const sections = parseSheet(ss, className);
+  if (!sections) return [];
+  return sections[period || 'pertengahan'] || [];
 }
 
-function getStudentDetail(ss, name, className) {
-  if (!className || !name) return null;
-  const pt = readStudentsFromSheet(ss.getSheetByName(className), 'pertengahan').find(s => s.name === name);
-  const ak = readStudentsFromSheet(ss.getSheetByName(className), 'akhir').find(s => s.name === name);
-  if (!pt && !ak) return null;
-  return { name, className, pertengahan: pt || null, akhir: ak || null };
-}
-
-// Compute summary for one subject from all class sheets
+// Per-subject summary across all classes for both periods
 function getSummary(ss, subject) {
   if (!subject) return null;
   const result = { pertengahan: {}, akhir: {} };
   for (const cid of CLASS_SHEETS) {
-    const sheet = ss.getSheetByName(cid);
-    if (!sheet) continue;
-    // Get raw student data for this class
-    const ptStudents = readStudentsFromSheet(sheet, 'pertengahan');
-    const akStudents = readStudentsFromSheet(sheet, 'akhir');
-    const subs = getPerClassSubjects(cid);
-    // Check if this class has this subject (consider UI mapping)
-    const rawSubj = Object.keys(SUBJECT_UI_MAP).find(k => SUBJECT_UI_MAP[k] === subject) || subject;
-    if (!subs.includes(rawSubj)) continue;
-    // Compute TP counts for Pertengahan
-    const ptCounts = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 };
-    let ptTotal = 0;
-    for (const s of ptStudents) {
-      const tp = s.subjects[subject];
-      if (tp && ptCounts[tp] !== undefined) { ptCounts[tp]++; ptTotal++; }
+    const sections = parseSheet(ss, cid);
+    if (!sections) continue;
+    for (const per of ['pertengahan', 'akhir']) {
+      const counts = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 };
+      let total = 0;
+      for (const s of sections[per]) {
+        const tp = s.subjects[subject];
+        if (tp && counts[tp] !== undefined) { counts[tp]++; total++; }
+      }
+      const tp36 = counts.TP3 + counts.TP4 + counts.TP5 + counts.TP6;
+      result[per][cid] = {
+        counts, total, tp3to6: tp36,
+        tp3to6Pct: total > 0 ? Math.round(tp36 / total * 100) : 0
+      };
     }
-    const ptTp3 = ptCounts.TP3 + ptCounts.TP4 + ptCounts.TP5 + ptCounts.TP6;
-    // Compute TP counts for Akhir
-    const akCounts = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 };
-    let akTotal = 0;
-    for (const s of akStudents) {
-      const tp = s.subjects[subject];
-      if (tp && akCounts[tp] !== undefined) { akCounts[tp]++; akTotal++; }
-    }
-    const akTp3 = akCounts.TP3 + akCounts.TP4 + akCounts.TP5 + akCounts.TP6;
-    result.pertengahan[cid] = {
-      counts: ptCounts, total: ptTotal,
-      tp3to6: ptTp3, tp3to6Pct: ptTotal > 0 ? Math.round(ptTp3 / ptTotal * 100) : 0
-    };
-    result.akhir[cid] = {
-      counts: akCounts, total: akTotal,
-      tp3to6: akTp3, tp3to6Pct: akTotal > 0 ? Math.round(akTp3 / akTotal * 100) : 0
-    };
   }
   return result;
 }
 
 function getFullData(ss) {
-  const classes = getClasses(ss);
-  const subjectList = getSubjectList(ss);
+  const classes = [];
   const students = {};
+  const classSubjects = {};
   const summaries = {};
-  for (const cid of CLASS_SHEETS) {
-    const sheet = ss.getSheetByName(cid);
-    if (!sheet) continue;
-    students[cid] = {
-      pertengahan: readStudentsFromSheet(sheet, 'pertengahan'),
-      akhir: readStudentsFromSheet(sheet, 'akhir')
-    };
+  const subjectSet = new Set();
+
+  for (const id of CLASS_SHEETS) {
+    const sections = parseSheet(ss, id);
+    if (!sections) continue;
+    const pt = sections.pertengahan, ak = sections.akhir;
+    fillGender(pt, ak);
+    students[id] = { pertengahan: pt, akhir: ak };
+    const n = pt.length > 0 ? pt.length : ak.length;
+    classes.push({ id, name: CLASS_DISPLAY[id] || id, students: n, year: (id.match(/\d+/)?.[0] || '') });
+
+    // subjects per class per period
+    const cs = { pertengahan: [], akhir: [] };
+    for (const per of ['pertengahan', 'akhir']) {
+      const hdr = findHeader(ss, id, per);
+      const list = hdr ? Object.keys(hdr).map(uiName) : [];
+      cs[per] = list;
+      list.forEach(s => subjectSet.add(s));
+    }
+    classSubjects[id] = cs;
   }
-  for (const subj of subjectList) {
-    summaries[subj] = getSummary(ss, subj);
+
+  for (const sub of subjectSet) {
+    summaries[sub] = getSummary(ss, sub);
   }
+
   let totalStudents = 0;
   for (const c of classes) totalStudents += c.students;
+
   let overallPct = 0, subjectCount = 0;
-  for (const subj of subjectList) {
-    const summary = summaries[subj];
+  for (const sub of subjectSet) {
+    const summary = summaries[sub];
     if (!summary) continue;
     let totalAll = 0, tp3all = 0;
     for (const [cid, d] of Object.entries(summary.akhir)) {
@@ -210,33 +261,13 @@ function getFullData(ss) {
     }
     if (totalAll > 0) { overallPct += Math.round(tp3all / totalAll * 100); subjectCount++; }
   }
+
+  const subjectList = Array.from(subjectSet).sort();
   return {
     stats: {
       totalStudents, totalClasses: classes.length, totalSubjects: subjectList.length,
       avgTp3to6Pct: subjectCount > 0 ? Math.round(overallPct / subjectCount) : 0
     },
-    classes, subjectList, students, summaries
-  };
-}
-
-function getStats(ss) {
-  const classes = getClasses(ss);
-  let totalStudents = 0;
-  for (const c of classes) totalStudents += c.students;
-  const subjectList = getSubjectList(ss);
-  let overallPct = 0, subjectCount = 0;
-  for (const subj of subjectList) {
-    const summary = getSummary(ss, subj);
-    if (!summary) continue;
-    let totalAll = 0, tp3all = 0;
-    for (const [cid, d] of Object.entries(summary.akhir)) {
-      if (d) { totalAll += d.total; tp3all += d.tp3to6; }
-    }
-    if (totalAll > 0) { overallPct += Math.round(tp3all / totalAll * 100); subjectCount++; }
-  }
-  return {
-    totalStudents, totalClasses: classes.length, totalSubjects: subjectList.length,
-    avgTp3to6Pct: subjectCount > 0 ? Math.round(overallPct / subjectCount) : 0,
-    classes, subjectList
+    classes, subjectList, students, summaries, classSubjects
   };
 }

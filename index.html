@@ -11,54 +11,54 @@
 <body>
 
 <!-- Sidebar -->
-<div class="sidebar" id="sidebar">
+<aside class="sidebar" id="sidebar">
   <div class="sidebar-logo">
     <img src="logo-sk-sg-damit.png" alt="SK Sungai Damit" class="sidebar-logo-img" onerror="this.style.display='none'">
-    <div>
-      <div class="sidebar-logo-text">SK Sungai Damit</div>
-      <div class="sidebar-logo-sub">Dashboard PBD <span id="status-badge" style="display:inline-block;font-size:9px;background:#6b7280;color:#fff;border-radius:8px;padding:1px 6px;margin-left:4px;vertical-align:middle">MOCK</span></div>
-    </div>
   </div>
-  <div class="sidebar-nav">
-    <div class="sidebar-section">Utama</div>
-    <div class="sidebar-item active" data-page="rumusan" onclick="navigate('rumusan')">
-      <span class="icon">📊</span><span>Rumusan PBD</span>
+  <nav class="sidebar-nav">
+    <div class="sidebar-item active" data-page="rumusan" data-label="Rumusan PBD" onclick="navigate('rumusan')">
+      <span class="icon">📊</span><span class="label">Rumusan</span>
     </div>
-    <div class="sidebar-item" data-page="subjek" onclick="navigate('subjek')">
-      <span class="icon">📚</span><span>By Subjek</span>
+    <div class="sidebar-item" data-page="subjek" data-label="By Subjek" onclick="navigate('subjek')">
+      <span class="icon">📚</span><span class="label">Subjek</span>
     </div>
-    <div class="sidebar-item" data-page="kelas" onclick="navigate('kelas')">
-      <span class="icon">🏫</span><span>By Kelas</span>
+    <div class="sidebar-item" data-page="kelas" data-label="By Kelas" onclick="navigate('kelas')">
+      <span class="icon">🏫</span><span class="label">Kelas</span>
     </div>
-    <div class="sidebar-section">Laporan</div>
-    <div class="sidebar-item" data-page="laporan" onclick="navigate('laporan')">
-      <span class="icon">🖨️</span><span>Laporan</span>
+    <div class="sidebar-item" data-page="laporan" data-label="Laporan" onclick="navigate('laporan')">
+      <span class="icon">🖨️</span><span class="label">Laporan</span>
     </div>
-    <div class="sidebar-section" style="margin-top:8px">Tahun</div>
-    <div style="padding:4px 14px">
-      <button class="yr-btn on" data-yr="2025" onclick="switchYear('2025')">2025</button>
+    <div class="sidebar-item" data-page="ejen" data-label="Ejen PBD" onclick="navigate('ejen')">
+      <span class="icon">🤖</span><span class="label">Ejen</span>
     </div>
-  </div>
+  </nav>
   <div class="sidebar-bottom">
-    <div class="sidebar-item" onclick="document.querySelector('.page').innerHTML='<div class=\\'loading\\'><div class=\\'spin\\'></div><div>Memuat semula...</div></div>';setTimeout(()=>renderPage(S.page),300)">
-      <span class="icon">🔄</span><span>Muat Semula</span>
+    <div class="sidebar-item" data-label="Muat Semula" onclick="document.querySelector('.page').innerHTML='<div class=\\'loading\\'><div class=\\'spin\\'></div><div>Memuat semula...</div></div>';setTimeout(()=>renderPage(S.page),300)">
+      <span class="icon">🔄</span><span class="label">Muat Semula</span>
     </div>
   </div>
-</div>
+</aside>
 
 <!-- Main -->
 <div class="main-wrap">
 
   <!-- Topbar -->
-  <div class="topbar">
+  <header class="topbar">
     <div class="topbar-left">
       <span class="topbar-title">Dashboard PBD</span>
+      <span class="topbar-sub">SK Sungai Damit · Tuaran, Sabah</span>
+      <span id="status-badge">MOCK</span>
     </div>
     <div class="topbar-controls">
-      <button class="period-btn" data-period="pertengahan" onclick="setPeriod('pertengahan')">Pertengahan</button>
-      <button class="period-btn active" data-period="akhir" onclick="setPeriod('akhir')">Akhir</button>
+      <div class="seg" id="year-btns">
+        <button class="yr-btn on" data-yr="2025" onclick="switchYear('2025')">2025</button>
+      </div>
+      <div class="seg">
+        <button class="period-btn" data-period="pertengahan" onclick="setPeriod('pertengahan')">Pertengahan</button>
+        <button class="period-btn active" data-period="akhir" onclick="setPeriod('akhir')">Akhir</button>
+      </div>
     </div>
-  </div>
+  </header>
 
   <!-- Pages -->
   <main>
@@ -91,6 +91,11 @@
       </div>
     </div>
 
+    <!-- Ejen PBD -->
+    <div class="page hidden" id="page-ejen">
+      <div id="ejen-content"></div>
+    </div>
+
   </main>
 </div>
 
@@ -108,7 +113,7 @@
 <!-- Report Overlay -->
 <div class="rv-overlay" id="reportOverlay">
   <div class="rv-topbar">
-    <div style="font-weight:800;font-size:15px;color:#0f172a">Prasemak Laporan</div>
+    <div style="font-weight:800;font-size:15px;color:#171a24">Prasemak Laporan</div>
     <div>
       <button class="rv-btn rv-btn-secondary" onclick="closeReport()">Tutup</button>
       <button class="rv-btn rv-btn-primary" onclick="printReport()">🖨️ Cetak / PDF</button>
@@ -121,8 +126,8 @@
         <div class="rv-sub" id="rvSubtitle"></div>
       </div>
       <div style="text-align:right">
-        <div style="font-size:9px;color:#64748b;font-weight:800;letter-spacing:0.8px;margin-bottom:3px">DIJANA PADA</div>
-        <div style="font-size:13px;font-weight:800;color:#0f172a" id="rvDate"></div>
+        <div style="font-size:9px;color:#6b7288;font-weight:800;letter-spacing:0.8px;margin-bottom:3px">DIJANA PADA</div>
+        <div style="font-size:13px;font-weight:800;color:#171a24" id="rvDate"></div>
       </div>
     </div>
     <div class="rv-kpi-grid">

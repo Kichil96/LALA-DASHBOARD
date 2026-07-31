@@ -72,15 +72,26 @@ async function apiFetch(action, params = {}) {
 }
 
 // ====== MOCK DATA ======
+// Seeded PRNG so the demo data is deterministic — never changes between
+// refreshes (a changing dataset destroys user trust).
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 const MOCK = {};
 
 function buildMockData() {
+  const rand = mulberry32(2025);
   const firstNames = ['AARIZ FADZIL', 'NUR AFIA ALISHA', 'MUHAMMAD AQIL', 'NUR FARHA FALISHA', 'AHMAD AMIN AFKAR'];
   const lastNames = ['BIN MOHAMMAD', 'BINTI NASARUDIN', 'BIN ZAIDI', 'BINTI NORAZAMIN', 'BIN MOHAMMAD ANAPI'];
   const genders = ['L', 'P', 'L', 'P', 'L'];
 
   MOCK.classes = CLASS_NAMES.map((n, i) => ({
-    id: CLASS_IDS[i], name: n, students: 20 + Math.floor(Math.random() * 20), year: String(i + 1)
+    id: CLASS_IDS[i], name: n, students: 20 + Math.floor(rand() * 20), year: String(i + 1)
   }));
 
   MOCK.subjects = {};
@@ -96,16 +107,17 @@ function buildMockData() {
   for (const cid of CLASS_IDS) {
     MOCK.students[cid] = { pertengahan: [], akhir: [] };
     const subs = MOCK.subjects[cid];
-    const count = 15 + Math.floor(Math.random() * 20);
+    const count = 15 + Math.floor(rand() * 20);
 
     for (let i = 0; i < count; i++) {
       const name = firstNames[i % firstNames.length] + ' ' + (i < firstNames.length ? lastNames[i % lastNames.length] : 'BIN ABDULLAH ' + (i + 1));
       const gender = genders[i % genders.length];
-      const sP = { bil: i + 1, name, gender, subjects: {} };
-      const sA = { bil: i + 1, name, gender, subjects: {} };
+      const ic = String(200000000000 + i).padStart(12, '0');
+      const sP = { bil: i + 1, name, ic, gender, subjects: {} };
+      const sA = { bil: i + 1, name, ic, gender, subjects: {} };
       for (const sub of subs) {
-        sP.subjects[sub] = 'TP' + (1 + Math.floor(Math.random() * 5));
-        sA.subjects[sub] = 'TP' + (1 + Math.floor(Math.random() * 5));
+        sP.subjects[sub] = 'TP' + (1 + Math.floor(rand() * 5));
+        sA.subjects[sub] = 'TP' + (1 + Math.floor(rand() * 5));
       }
       MOCK.students[cid].pertengahan.push(sP);
       MOCK.students[cid].akhir.push(sA);
@@ -150,37 +162,96 @@ async function loadLiveData() {
     MOCK.summary = data.summaries;
     MOCK.subjectList = data.subjectList;
     MOCK.classSubjects = data.classSubjects;
+    MOCK.generatedAt = data.generatedAt;
+    MOCK.cached = { classes: MOCK.classes, students: MOCK.students, summary: MOCK.summary, subjectList: MOCK.subjectList, classSubjects: MOCK.classSubjects, generatedAt: MOCK.generatedAt };
+    S.dataSource = 'live';
     return true;
   }
   // Fallback: fetch individual pieces
   const stats = await apiFetch('stats');
-  if (!stats) return false;
+  if (!stats) {
+    // Restore the last good live snapshot if we have one (never show random mock silently)
+    if (MOCK.cached) {
+      Object.assign(MOCK, MOCK.cached);
+      S.dataSource = 'cached';
+      return false;
+    }
+    S.dataSource = 'mock';
+    return false;
+  }
   MOCK.classes = stats.classes || MOCK.classes;
   MOCK.students = {};
   MOCK.summary = {};
+  let ok = true;
   for (const cid of CLASS_IDS) {
     MOCK.students[cid] = { pertengahan: [], akhir: [] };
     const pt = await apiFetch('students', { class: cid, period: 'pertengahan' });
     const ak = await apiFetch('students', { class: cid, period: 'akhir' });
     if (pt) MOCK.students[cid].pertengahan = pt;
     if (ak) MOCK.students[cid].akhir = ak;
+    if (!pt && !ak) ok = false;
   }
   for (const sub of getAllSubjects()) {
     const summary = await apiFetch('summary', { subject: sub });
     if (summary) MOCK.summary[sub] = summary;
   }
+  S.dataSource = ok ? 'live' : 'mock';
   return true;
 }
 
 (async () => {
   const live = await loadLiveData();
-  if (live) {
-    document.getElementById('status-badge').textContent = 'LIVE';
-    document.getElementById('status-badge').style.background = '#22c55e';
-  }
+  setDataSourceUI();
   MOCK.loaded = true;
   renderPage(S.page);
 })();
+
+// Show clear indicator of whether the dashboard is showing live or demo data.
+function setDataSourceUI() {
+  const badge = document.getElementById('status-badge');
+  if (!badge) return;
+  if (S.dataSource === 'live') {
+    badge.textContent = 'LIVE';
+    badge.style.background = '#22c55e';
+  } else if (S.dataSource === 'cached') {
+    badge.textContent = 'CACHE';
+    badge.style.background = '#f59e0b';
+  } else {
+    badge.textContent = 'DEMO';
+    badge.style.background = '#ef4444';
+  }
+  const upd = document.getElementById('topbar-updated');
+  if (upd && MOCK.generatedAt) {
+    const d = new Date(MOCK.generatedAt);
+    upd.textContent = 'Dikemas kini: ' + d.toLocaleString('ms-MY', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  }
+  // Show a persistent banner if the user is NOT looking at live data
+  let banner = document.getElementById('data-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'data-banner';
+    banner.className = 'data-banner hidden';
+    document.body.prepend(banner);
+  }
+  if (S.dataSource !== 'live') {
+    banner.textContent = S.dataSource === 'cached'
+      ? '⚠️ Gagal muat data terkini — menunjukkan data cache terakhir. Klik "Muat Semula".'
+      : '⚠️ Menunjukkan DATA DEMO (bukan data sebenar). Semak sambungan API atau klik "Muat Semula".';
+    banner.classList.remove('hidden');
+  } else {
+    banner.classList.add('hidden');
+  }
+}
+
+async function reloadData() {
+  const btn = document.querySelector('.sidebar-item[data-label="Muat Semula"]');
+  if (btn) btn.style.opacity = '0.5';
+  S.dataSource = 'mock';
+  const live = await loadLiveData();
+  setDataSourceUI();
+  renderPage(S.page);
+  if (btn) btn.style.opacity = '1';
+}
 
 // ====== APP STATE ======
 const S = {
@@ -306,11 +377,17 @@ function renderRumusan() {
         </div>
       </div>
       <div class="subj-grid" id="rumusan-subj-cards"></div>
+      <div class="card" style="margin-top:28px">
+        <div class="card-t">📋 Analisis Mengikut Subjek</div>
+        <div class="card-s">Bilangan murid bagi setiap TP untuk seluruh sekolah — ${S.period === 'akhir' ? 'AKHIR TAHUN' : 'PERTENGAHAN TAHUN'} ${YEAR}</div>
+        <div class="tbl-wrap" id="rumusan-analysis-table"></div>
+      </div>
     `;
     container.innerHTML = html;
 
     renderRumusanCards();
     renderRumusanCharts(allSubjects);
+    renderRumusanAnalysisTable(allSubjects);
   }, 50);
 }
 
@@ -460,6 +537,57 @@ function filterRumusanSubject() {
   const val = document.getElementById('rumusan-subj-filter')?.value || '';
   renderRumusanCards(val || null);
   renderRumusanCharts(val || null);
+  renderRumusanAnalysisTable(val ? [val] : getAllSubjects());
+}
+
+// MP analysis table — whole-school per subject: Bil Murid, TP1..TP6 (count + %),
+// plus combined TP1-2 and TP3-6 totals.
+function renderRumusanAnalysisTable(subjects) {
+  const container = document.getElementById('rumusan-analysis-table');
+  if (!container) return;
+  const period = S.period;
+  const tpKeys = ['TP1','TP2','TP3','TP4','TP5','TP6'];
+
+  let rows = '', totals = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 }, grandBil = 0;
+  for (const sub of subjects) {
+    const counts = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 };
+    let bil = 0;
+    for (const c of MOCK.classes) {
+      const d = MOCK.summary[sub]?.[period]?.[c.id];
+      if (d) {
+        bil += d.total;
+        for (const tp of tpKeys) counts[tp] += d.counts[tp] || 0;
+      }
+    }
+    if (bil === 0) continue;
+    grandBil += bil;
+    for (const tp of tpKeys) totals[tp] += counts[tp];
+    const tp12 = counts.TP1 + counts.TP2;
+    const tp36 = counts.TP3 + counts.TP4 + counts.TP5 + counts.TP6;
+    rows += `<tr>
+      <td><strong style="color:${subjColor(sub)}">${sub}</strong></td>
+      <td>${bil}</td>
+      ${tpKeys.map(tp => `<td>${counts[tp]} <span class="tbl-pct">${Math.round(counts[tp] / bil * 100)}%</span></td>`).join('')}
+      <td class="tbl-hi">${tp12}</td><td class="tbl-hi">${bil > 0 ? Math.round(tp12 / bil * 100) : 0}%</td>
+      <td class="tbl-hi">${tp36}</td><td class="tbl-hi">${bil > 0 ? Math.round(tp36 / bil * 100) : 0}%</td>
+    </tr>`;
+  }
+  const t12 = totals.TP1 + totals.TP2;
+  const t36 = totals.TP3 + totals.TP4 + totals.TP5 + totals.TP6;
+  rows += `<tr style="font-weight:800;background:var(--surface2)">
+    <td>JUMLAH</td>
+    <td>${grandBil}</td>
+    ${tpKeys.map(tp => `<td>${totals[tp]} <span class="tbl-pct">${grandBil > 0 ? Math.round(totals[tp] / grandBil * 100) : 0}%</span></td>`).join('')}
+    <td class="tbl-hi">${t12}</td><td class="tbl-hi">${grandBil > 0 ? Math.round(t12 / grandBil * 100) : 0}%</td>
+    <td class="tbl-hi">${t36}</td><td class="tbl-hi">${grandBil > 0 ? Math.round(t36 / grandBil * 100) : 0}%</td>
+  </tr>`;
+
+  container.innerHTML = `<table>
+    <thead><tr>
+      <th>MP</th><th>Bil Murid</th>
+      <th>TP1</th><th>%</th><th>TP2</th><th>%</th><th>TP3</th><th>%</th><th>TP4</th><th>%</th><th>TP5</th><th>%</th><th>TP6</th><th>%</th>
+      <th>TP1-2</th><th>%</th><th>TP3-6</th><th>%</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function selectSubject(sub) {
@@ -711,9 +839,9 @@ function renderKelasTable(cid) {
     return;
   }
 
-  let html = `<table><thead><tr><th>Bil.</th><th>Nama</th><th>J</th>${subs.map(s => `<th>${s}</th>`).join('')}</tr></thead><tbody>`;
+  let html = `<table><thead><tr><th>Bil.</th><th>Nama</th><th>No. K/P</th><th>J</th>${subs.map(s => `<th>${s}</th>`).join('')}</tr></thead><tbody>`;
   for (const s of filtered) {
-    html += `<tr><td>${s.bil}</td><td><span class="student-link" onclick="showStudentDetail('${cid}','${s.name.replace(/'/g, "\\'")}')">${s.name}</span></td><td>${s.gender}</td>`;
+    html += `<tr><td>${s.bil}</td><td><span class="student-link" onclick="showStudentDetail('${cid}','${s.name.replace(/'/g, "\\'")}')">${s.name}</span></td><td>${s.ic || '-'}</td><td>${s.gender}</td>`;
     for (const sub of subs) {
       const tp = s.subjects[sub] || '';
       const cls = tp ? 'tp-badge tp-' + tp.replace('TP', '').toLowerCase() : '';
@@ -743,20 +871,39 @@ function showStudentDetail(cid, name) {
         <div class="detail-val">${MOCK.classes.find(c => c.id === cid)?.name || cid}</div>
         <div class="detail-sub">${S.period === 'akhir' ? 'Akhir' : 'Pertengahan'} Tahun ${YEAR}</div>
       </div>
+      <div class="detail-card">
+        <div class="detail-lbl">Jantina</div>
+        <div class="detail-val">${(pS?.gender || aS?.gender || '-') === 'L' ? 'Lelaki' : (pS?.gender || aS?.gender || '-') === 'P' ? 'Perempuan' : '-'}</div>
+        <div class="detail-sub">L / P</div>
+      </div>
+      <div class="detail-card">
+        <div class="detail-lbl">No. K/P</div>
+        <div class="detail-val" style="font-size:14px">${pS?.ic || aS?.ic || '-'}</div>
+        <div class="detail-sub">MyKID</div>
+      </div>
     </div>
   `;
 
   if (subs.length > 0) {
-    bodyHtml += `<table class="comp-table"><thead><tr><th>Subjek</th><th>Pertengahan</th><th>Akhir</th></tr></thead><tbody>`;
+    bodyHtml += `<table class="comp-table"><thead><tr><th>Subjek</th><th>Pertengahan</th><th>Akhir</th><th>Perubahan</th></tr></thead><tbody>`;
     for (const sub of subs) {
       const tpP = pS?.subjects[sub] || '-';
       const tpA = aS?.subjects[sub] || '-';
       const clsP = tpP.startsWith('TP') ? 'tp-badge tp-' + tpP.replace('TP','').toLowerCase() : '';
       const clsA = tpA.startsWith('TP') ? 'tp-badge tp-' + tpA.replace('TP','').toLowerCase() : '';
+      const numP = tpP.startsWith('TP') ? parseInt(tpP.slice(2), 10) : null;
+      const numA = tpA.startsWith('TP') ? parseInt(tpA.slice(2), 10) : null;
+      let change = '-';
+      if (numP !== null && numA !== null) {
+        change = numA > numP ? `<span class="chg-up">▲ +${numA - numP}</span>`
+               : numA < numP ? `<span class="chg-dn">▼ ${numA - numP}</span>`
+               : `<span class="chg-same">• sama</span>`;
+      }
       bodyHtml += `<tr>
         <td><strong>${sub}</strong></td>
         <td>${tpP !== '-' ? `<span class="${clsP}">${tpP}</span>` : '-'}</td>
         <td>${tpA !== '-' ? `<span class="${clsA}">${tpA}</span>` : '-'}</td>
+        <td>${change}</td>
       </tr>`;
     }
     bodyHtml += `</tbody></table>`;
@@ -1224,10 +1371,7 @@ async function switchYear(yr) {
   YEAR = yr;
   document.querySelectorAll('.yr-btn').forEach(b => b.classList.toggle('on', b.dataset.yr === yr));
   const live = await loadLiveData();
-  if (live) {
-    document.getElementById('status-badge').textContent = 'LIVE';
-    document.getElementById('status-badge').style.background = '#22c55e';
-  }
+  setDataSourceUI();
   renderPage(S.page);
 }
 

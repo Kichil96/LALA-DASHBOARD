@@ -6,7 +6,7 @@
 <title>Dashboard PBD — SK Sungai Damit</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 
@@ -33,7 +33,7 @@
     </div>
   </nav>
   <div class="sidebar-bottom">
-    <div class="sidebar-item" data-label="Muat Semula" onclick="document.querySelector('.page').innerHTML='<div class=\\'loading\\'><div class=\\'spin\\'></div><div>Memuat semula...</div></div>';setTimeout(()=>renderPage(S.page),300)">
+    <div class="sidebar-item" data-label="Muat Semula" onclick="reloadData()">
       <span class="icon">🔄</span><span class="label">Muat Semula</span>
     </div>
   </div>
@@ -47,7 +47,8 @@
     <div class="topbar-left">
       <span class="topbar-title">Dashboard PBD</span>
       <span class="topbar-sub">SK Sungai Damit · Tuaran, Sabah</span>
-      <span id="status-badge">MOCK</span>
+      <span id="status-badge">DEMO</span>
+      <span class="topbar-updated" id="topbar-updated"></span>
     </div>
     <div class="topbar-controls">
       <div class="seg" id="year-btns">
@@ -149,6 +150,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

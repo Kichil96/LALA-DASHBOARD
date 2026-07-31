@@ -116,12 +116,13 @@ function parseSheet(ss, sheetName) {
       const name = String(row[1]).trim();
       if (!isNaN(bil) && name.length >= 2) {
         const gender = fixGender(name, row[3]);
+        const ic = String(row[2] || '').trim();
         const subjects = {};
         for (const [code, col] of Object.entries(headers[cur])) {
           const v = String(row[col]).trim().toUpperCase();
           if (v.startsWith('TP')) subjects[uiName(code)] = v;
         }
-        sections[cur].push({ bil, name, gender, subjects });
+        sections[cur].push({ bil, name, ic, gender, subjects });
       }
     }
   }
@@ -264,6 +265,7 @@ function getFullData(ss) {
 
   const subjectList = Array.from(subjectSet).sort();
   return {
+    generatedAt: new Date().toISOString(),
     stats: {
       totalStudents, totalClasses: classes.length, totalSubjects: subjectList.length,
       avgTp3to6Pct: subjectCount > 0 ? Math.round(overallPct / subjectCount) : 0

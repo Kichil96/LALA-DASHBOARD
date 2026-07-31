@@ -88,11 +88,7 @@ body {
 .topbar-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
 .topbar-title { font-size: 19px; font-weight: 800; letter-spacing: -.3px; color: var(--text); }
 .topbar-sub { font-size: 12px; color: var(--muted2); font-weight: 500; }
-#status-badge {
-  display: inline-block; font-size: 9px; font-weight: 800; letter-spacing: .5px;
-  background: #6b7280; color: #fff; border-radius: 20px; padding: 3px 9px;
-  text-transform: uppercase;
-}
+.topbar-updated { font-size: 11px; color: var(--muted2); font-weight: 600; white-space: nowrap; }
 .topbar-controls { display: flex; align-items: center; gap: 12px; }
 .yr-btn {
   padding: 8px 16px; border-radius: 12px; border: 1px solid var(--border2);
@@ -258,6 +254,21 @@ tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
 tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: var(--surface2); }
 td { padding: 11px 16px; color: var(--text); font-weight: 500; white-space: nowrap; }
+.tbl-pct { color: var(--muted2); font-size: 11px; font-weight: 700; }
+.tbl-hi { background: var(--surface2); color: var(--primary); font-weight: 800; }
+
+/* ============ DATA SOURCE INDICATOR ============ */
+.data-banner {
+  background: #fef2f2; color: #b91c1c; border-bottom: 1px solid #fecaca;
+  font-size: 13px; font-weight: 700; padding: 10px 20px; text-align: center; z-index: 100;
+}
+.data-banner.hidden { display: none; }
+#status-badge {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: 10px; font-weight: 800; letter-spacing: .5px; color: #fff;
+  background: var(--muted2); margin-left: 10px;
+}
+.topbar-updated { font-size: 11px; color: var(--muted2); font-weight: 600; margin-left: 12px; white-space: nowrap; }
 .tp-badge {
   display: inline-flex; align-items: center; justify-content: center;
   width: 34px; height: 24px; border-radius: 7px; font-size: 11px; font-weight: 800;
@@ -314,6 +325,9 @@ td { padding: 11px 16px; color: var(--text); font-weight: 500; white-space: nowr
 .comp-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .comp-table th { padding: 8px 10px; text-align: left; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; color: var(--muted2); background: var(--surface2); border-bottom: 1px solid var(--border); }
 .comp-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.chg-up { color: #16a34a; font-weight: 800; font-size: 11px; }
+.chg-dn { color: #dc2626; font-weight: 800; font-size: 11px; }
+.chg-same { color: var(--muted2); font-size: 11px; }
 
 /* ============ REPORT OVERLAY ============ */
 .rv-overlay { display: none; position: fixed; inset: 0; z-index: 9999; background: var(--bg); color: var(--text); overflow-y: auto; }

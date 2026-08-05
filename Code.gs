@@ -87,7 +87,7 @@ function cachePut(key, obj) {
     cache.put(key, json, CACHE_TTL);
     return;
   }
-  const gz = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(json).getBytes()));
+  const gz = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(json)));
   if (gz.length <= 90000) cache.put(key + '_gz', gz, CACHE_TTL);
   // Too big for the script cache: skip server cache (frontend caches instead).
 }

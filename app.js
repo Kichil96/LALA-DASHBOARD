@@ -54,10 +54,10 @@ function getClassSubjects(cid, period) {
 function subjColor(sub) { return SUBJ_COLORS[sub] || '#6366f1'; }
 const API_BASE = 'https://script.google.com/macros/s/AKfycbxy-CNgFYhiNO2fusyUffErsJIBhb-4pFWNjagLUVJNZbMX954_jnQo3sDys-T_iV4/exec';
 
-async function apiFetch(action, params = {}) {
+async function apiFetch(action, params = {}, yearOverride) {
   const url = new URL(API_BASE);
   url.searchParams.set('action', action);
-  if (action !== 'years') url.searchParams.set('year', YEAR);
+  if (action !== 'years') url.searchParams.set('year', yearOverride || YEAR);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   try {
     const res = await fetch(url.toString());
@@ -146,15 +146,46 @@ function buildMockData() {
 buildMockData();
 
 // ====== LOADING OVERLAY ======
+let loadTimer = null, hideTimer = null, staleTimer = null;
+let loadShownAt = 0, loadVisible = false;
+
 function showLoading(text) {
-  const ov = document.getElementById('loadOverlay');
-  const t = document.getElementById('loadText');
-  if (t && text) t.textContent = text;
-  if (ov) ov.style.display = 'flex';
+  if (loadTimer) clearTimeout(loadTimer);
+  // Small delay so instant (cached) loads never flash the overlay
+  loadTimer = setTimeout(() => {
+    const ov = document.getElementById('loadOverlay');
+    if (!ov) return;
+    loadShownAt = Date.now();
+    loadVisible = true;
+    ov.style.display = 'flex';
+    ov.classList.remove('load-out');
+    const t = document.getElementById('loadText');
+    if (t && text) t.textContent = text;
+    if (staleTimer) clearTimeout(staleTimer);
+    staleTimer = setTimeout(() => {
+      const t2 = document.getElementById('loadText');
+      if (t2 && loadVisible) t2.textContent = 'Masih memuatkan... muat pertama mungkin mengambil masa sehingga seminit.';
+    }, 5000);
+  }, 300);
 }
+
 function hideLoading() {
-  const ov = document.getElementById('loadOverlay');
-  if (ov) ov.style.display = 'none';
+  if (loadTimer) { clearTimeout(loadTimer); loadTimer = null; }
+  if (staleTimer) { clearTimeout(staleTimer); staleTimer = null; }
+  if (!loadVisible) return;
+  if (hideTimer) clearTimeout(hideTimer);
+  // Minimum visible time + fade-out for a smooth transition
+  const wait = Math.max(0, 600 - (Date.now() - loadShownAt));
+  hideTimer = setTimeout(() => {
+    const ov = document.getElementById('loadOverlay');
+    if (!ov) return;
+    ov.classList.add('load-out');
+    setTimeout(() => {
+      ov.style.display = 'none';
+      ov.classList.remove('load-out');
+      loadVisible = false;
+    }, 250);
+  }, wait);
 }
 
 // ====== PER-YEAR CACHE (memory + localStorage) ======
@@ -217,43 +248,28 @@ async function loadLiveData(fresh = false) {
     }
   }
 
-  // Optimized single fullData call (with cache bypass when refreshing)
-  const data = await apiFetch('fullData', fresh ? { nocache: '1' } : {});
+  // Single fullData call (with cache bypass when refreshing), retry once on failure
+  let data = await apiFetch('fullData', fresh ? { nocache: '1' } : {});
+  if (!(data && data.students && data.summaries)) {
+    await new Promise(r => setTimeout(r, 1500));
+    data = await apiFetch('fullData', fresh ? { nocache: '1' } : {});
+  }
   if (data && data.students && data.summaries) {
     applyData(data);
     setCachedYearData(S.year, data);
     return true;
   }
-  // Fallback: fetch individual pieces
-  const stats = await apiFetch('stats');
-  if (!stats) {
-    // Restore the last good live snapshot if we have one (never show random mock silently)
-    if (MOCK.cached) {
-      Object.assign(MOCK, MOCK.cached);
-      S.dataSource = 'cached';
-      return false;
-    }
-    S.dataSource = 'mock';
+
+  // Last resort: stale snapshot for this year, then any snapshot (never random mock silently)
+  const stale = getCachedYearData(S.year);
+  if (stale) { applyData(stale); S.dataSource = 'cached'; return false; }
+  if (MOCK.cached) {
+    Object.assign(MOCK, MOCK.cached);
+    S.dataSource = 'cached';
     return false;
   }
-  MOCK.classes = stats.classes || MOCK.classes;
-  MOCK.students = {};
-  MOCK.summary = {};
-  let ok = true;
-  for (const cid of CLASS_IDS) {
-    MOCK.students[cid] = { pertengahan: [], akhir: [] };
-    const pt = await apiFetch('students', { class: cid, period: 'pertengahan' });
-    const ak = await apiFetch('students', { class: cid, period: 'akhir' });
-    if (pt) MOCK.students[cid].pertengahan = pt;
-    if (ak) MOCK.students[cid].akhir = ak;
-    if (!pt && !ak) ok = false;
-  }
-  for (const sub of getAllSubjects()) {
-    const summary = await apiFetch('summary', { subject: sub });
-    if (summary) MOCK.summary[sub] = summary;
-  }
-  S.dataSource = ok ? 'live' : 'mock';
-  return true;
+  S.dataSource = 'mock';
+  return false;
 }
 
 (async () => {
@@ -263,10 +279,22 @@ async function loadLiveData(fresh = false) {
     setDataSourceUI();
     MOCK.loaded = true;
     renderPage(S.page);
+    // Silently fetch the other years so the first toggle is instant too
+    prefetchOtherYears();
   } finally {
     hideLoading();
   }
 })();
+
+// Background-fetch data for years not cached yet (no loading overlay).
+async function prefetchOtherYears() {
+  for (const y of S.years) {
+    if (y === S.year) continue;
+    if (getCachedYearData(y)) continue;
+    const data = await apiFetch('fullData', {}, y);
+    if (data && data.students && data.summaries) setCachedYearData(y, data);
+  }
+}
 
 // Show clear indicator of whether the dashboard is showing live or demo data.
 function setDataSourceUI() {

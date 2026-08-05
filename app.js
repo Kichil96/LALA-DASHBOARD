@@ -359,7 +359,8 @@ const S = {
   studentSearch: '',
   dataSource: 'mock',
   apiUrl: '',
-  yearCache: {}
+  yearCache: {},
+  rumusanMode: 'tp36'
 };
 
 // ====== NAVIGATION ======
@@ -459,7 +460,13 @@ function renderRumusan() {
       </div>
       <div class="charts-row">
         <div class="card">
-          <div class="card-t">TP3-6% mengikut Kelas</div>
+          <div class="card-t" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span id="rumusan-bar-title">${S.rumusanMode === 'tp12' ? 'TP1-2% mengikut Kelas' : 'TP3-6% mengikut Kelas'}</span>
+            <span class="seg" style="margin-left:auto">
+              <button class="rm-btn${S.rumusanMode === 'tp12' ? ' active' : ''}" data-rm="tp12" onclick="setRumusanMode('tp12')">TP1-2</button>
+              <button class="rm-btn${S.rumusanMode === 'tp36' ? ' active' : ''}" data-rm="tp36" onclick="setRumusanMode('tp36')">TP3-6</button>
+            </span>
+          </div>
           <div class="card-s">Peratusan pencapaian setiap kelas (semua subjek)</div>
           <div class="cw" style="height:260px"><canvas id="rumusan-bar-chart"></canvas></div>
         </div>
@@ -497,25 +504,28 @@ function renderRumusanCharts(filterSubject) {
   // Bar chart
   const barCtx = document.getElementById('rumusan-bar-chart');
   if (barCtx) {
+    const isTP12 = S.rumusanMode === 'tp12';
     const labels = classes.map(c => c.name.replace('Tahun ', 'T').replace(' Gemilang', ' G').replace(' Cemerlang', ' C'));
     const data = classes.map(c => {
-      let total = 0, tp3 = 0;
+      let total = 0, hi = 0;
       const subs = getClassSubjects(c.id, S.period);
       for (const sub of subs) {
         const d = MOCK.summary[sub]?.[period]?.[c.id];
-        if (d) { total += d.total; tp3 += d.tp3to6; }
+        if (d) { total += d.total; hi += isTP12 ? (d.total - d.tp3to6) : d.tp3to6; }
       }
-      return total > 0 ? Math.round(tp3 / total * 100) : 0;
+      return total > 0 ? Math.round(hi / total * 100) : 0;
     });
     rumusanCharts.push(new Chart(barCtx, {
       type: 'bar',
       data: {
         labels,
         datasets: [{
-          label: 'TP3-6%',
+          label: isTP12 ? 'TP1-2%' : 'TP3-6%',
           data,
           backgroundColor: classes.map((_, i) => {
-            const colors = ['#6366f1','#ec4899','#10b981','#f59e0b','#8b5cf6','#06b6d4','#f97316','#14b8a6'];
+            const colors = isTP12
+              ? ['#fca5a5','#f87171','#ef4444','#dc2626','#b91c1c','#fb7185','#f43f5e','#e11d48']
+              : ['#6366f1','#ec4899','#10b981','#f59e0b','#8b5cf6','#06b6d4','#f97316','#14b8a6'];
             return colors[i % colors.length];
           }),
           borderRadius: 6,
@@ -636,6 +646,15 @@ function filterRumusanSubject() {
   renderRumusanAnalysisTable(val ? [val] : getAllSubjects());
 }
 
+// Toggle the rumusan bar chart between TP1-2 and TP3-6
+function setRumusanMode(mode) {
+  S.rumusanMode = mode;
+  document.querySelectorAll('.rm-btn').forEach(b => b.classList.toggle('active', b.dataset.rm === mode));
+  const title = document.getElementById('rumusan-bar-title');
+  if (title) title.textContent = mode === 'tp12' ? 'TP1-2% mengikut Kelas' : 'TP3-6% mengikut Kelas';
+  renderRumusanCharts(getAllSubjects());
+}
+
 // MP analysis table — whole-school per subject: Bil Murid, TP1..TP6 (count + %),
 // plus combined TP1-2 and TP3-6 totals.
 function renderRumusanAnalysisTable(subjects) {
@@ -663,8 +682,11 @@ function renderRumusanAnalysisTable(subjects) {
     rows += `<tr>
       <td><strong style="color:${subjColor(sub)}">${sub}</strong></td>
       <td>${bil}</td>
-      ${tpKeys.map(tp => `<td>${counts[tp]} <span class="tbl-pct">${Math.round(counts[tp] / bil * 100)}%</span></td>`).join('')}
-      <td class="tbl-hi">${tp12}</td><td class="tbl-hi">${bil > 0 ? Math.round(tp12 / bil * 100) : 0}%</td>
+      ${tpKeys.map(tp => {
+        const lo = tp === 'TP1' || tp === 'TP2' ? ' tp-lo' : '';
+        return `<td class="${lo}">${counts[tp]}</td><td class="tbl-pct${lo}">${Math.round(counts[tp] / bil * 100)}%</td>`;
+      }).join('')}
+      <td class="tbl-hi tp-lo">${tp12}</td><td class="tbl-hi tp-lo">${bil > 0 ? Math.round(tp12 / bil * 100) : 0}%</td>
       <td class="tbl-hi">${tp36}</td><td class="tbl-hi">${bil > 0 ? Math.round(tp36 / bil * 100) : 0}%</td>
     </tr>`;
   }
@@ -673,8 +695,11 @@ function renderRumusanAnalysisTable(subjects) {
   rows += `<tr style="font-weight:800;background:var(--surface2)">
     <td>JUMLAH</td>
     <td>${grandBil}</td>
-    ${tpKeys.map(tp => `<td>${totals[tp]} <span class="tbl-pct">${grandBil > 0 ? Math.round(totals[tp] / grandBil * 100) : 0}%</span></td>`).join('')}
-    <td class="tbl-hi">${t12}</td><td class="tbl-hi">${grandBil > 0 ? Math.round(t12 / grandBil * 100) : 0}%</td>
+    ${tpKeys.map(tp => {
+      const lo = tp === 'TP1' || tp === 'TP2' ? ' tp-lo' : '';
+      return `<td class="${lo}">${totals[tp]}</td><td class="tbl-pct${lo}">${grandBil > 0 ? Math.round(totals[tp] / grandBil * 100) : 0}%</td>`;
+    }).join('')}
+    <td class="tbl-hi tp-lo">${t12}</td><td class="tbl-hi tp-lo">${grandBil > 0 ? Math.round(t12 / grandBil * 100) : 0}%</td>
     <td class="tbl-hi">${t36}</td><td class="tbl-hi">${grandBil > 0 ? Math.round(t36 / grandBil * 100) : 0}%</td>
   </tr>`;
 
@@ -1107,11 +1132,18 @@ function generateReport() {
     if (s) { aggTp36 += s.tp36; aggTp12 += s.tp12; aggTotal += s.total; }
   }
   const overallPct = aggTotal > 0 ? Math.round(aggTp36 / aggTotal * 100) : 0;
+  const tp12Pct = aggTotal > 0 ? Math.round(aggTp12 / aggTotal * 100) : 0;
+
+  // Exact roster count for the selected classes (not jumlah TP)
+  let rosterCount = 0;
+  for (const cid of selectedClasses) {
+    rosterCount += (MOCK.students[cid]?.[period] || []).length;
+  }
 
   document.getElementById('rvTotFac').textContent = selectedClasses.length + ' kelas';
-  document.getElementById('rvAudited').textContent = aggTotal + ' jumlah TP';
+  document.getElementById('rvAudited').textContent = rosterCount + ' murid';
   document.getElementById('rvComp').textContent = overallPct + '%';
-  document.getElementById('rvPend').textContent = aggTp12;
+  document.getElementById('rvPend').textContent = aggTp12 + ' (' + tp12Pct + '%)';
 
   // Reset charts
   const rvDonut = document.getElementById('rvDonut');
@@ -1177,7 +1209,7 @@ function generateReport() {
     if (!s || s.total === 0) return '';
     return `<tr>
       <td><strong>${sub}</strong></td>
-      <td>${s.total}</td>
+      <td>${s.bilMurid}</td>
       ${tpKeys.map(tp => `
         <td>${s.counts[tp]}</td>
         <td>${Math.round(s.counts[tp] / s.total * 100)}%</td>
@@ -1191,16 +1223,20 @@ function generateReport() {
 
   // Totals row
   const totalCounts = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 };
+  let totBilMurid = 0;
   for (const sub of filteredSubjects) {
     const s = subjectStats[sub];
-    if (s) for (const tp of tpKeys) totalCounts[tp] += s.counts[tp];
+    if (s) {
+      for (const tp of tpKeys) totalCounts[tp] += s.counts[tp];
+      totBilMurid += s.bilMurid;
+    }
   }
   const tot12 = totalCounts.TP1 + totalCounts.TP2;
   const tot36 = totalCounts.TP3 + totalCounts.TP4 + totalCounts.TP5 + totalCounts.TP6;
   const totAll = tot12 + tot36;
   document.getElementById('rvTableBody').innerHTML += `<tr style="font-weight:800;background:#f1f5f9">
     <td>JUMLAH</td>
-    <td>${totAll}</td>
+    <td>${totBilMurid}</td>
     ${tpKeys.map(tp => `
       <td>${totalCounts[tp]}</td>
       <td>${totAll > 0 ? Math.round(totalCounts[tp] / totAll * 100) : 0}%</td>
@@ -1223,7 +1259,8 @@ const SUGGESTIONS = [
   'Peratus TP3-6 tertinggi',
   'Subjek paling ramai TP1',
   'Purata TP3-6 semua subjek',
-  'Perbandingan TP3-6 BM dan BI'
+  'Perbandingan TP3-6 BM dan BI',
+  'Berapakah jumlah TP1 hingga TP6?'
 ];
 
 function renderEjen() {
@@ -1304,6 +1341,44 @@ function answerEjen(q) {
   }
 
   // === SOALAN JENIS ===
+
+  // Jumlah TP tertentu / semua TP (TP1–TP6) — boleh tapis mengikut subjek & kelas
+  const tpDigits = (q.match(/tp\s*([1-6])/gi) || []).map(t => 'TP' + t.replace(/\D+/g, ''));
+  let tpList = [...new Set(tpDigits)].sort((a, b) => +a.slice(2) - +b.slice(2));
+  const rangeM = q.match(/tp\s*([1-6])\s*[-–—]\s*tp\s*([1-6])|tp\s*([1-6])\s*hingga\s*tp\s*([1-6])/i);
+  if (rangeM) {
+    const ra = +(rangeM[1] || rangeM[3]), rb = +(rangeM[2] || rangeM[4]);
+    tpList = TP_LABELS.slice(ra - 1, rb);
+  }
+  if (/tp\s*1\s*[-–—hingga]\s*tp\s*6/i.test(lower) || (tpList.length === 0 && /semua\s+tp|\btp\b/.test(lower))) {
+    tpList = TP_LABELS;
+  }
+  if (/jumlah|berap|bilangan|count/i.test(q) && tpList.length > 0) {
+    let scopeSub = null;
+    for (const s of allSubjects) {
+      if (new RegExp('\\b' + s.toLowerCase() + '\\b').test(lower)) { scopeSub = s; break; }
+    }
+    let scopeClass = null;
+    for (const c of classes) {
+      if (lower.includes(c.name.toLowerCase())) { scopeClass = c; break; }
+    }
+    const scopeClasses = scopeClass ? [scopeClass] : classes;
+    const counts = { TP1: 0, TP2: 0, TP3: 0, TP4: 0, TP5: 0, TP6: 0 };
+    let assessed = 0;
+    for (const c of scopeClasses) {
+      const students = MOCK.students[c.id]?.[period] || [];
+      const subs = scopeSub ? [scopeSub] : getClassSubjects(c.id, period);
+      for (const st of students) {
+        for (const sub of subs) {
+          const tp = st.subjects[sub];
+          if (tp && counts[tp] !== undefined) { counts[tp]++; assessed++; }
+        }
+      }
+    }
+    const scopeLabel = scopeSub ? scopeSub + (scopeClass ? ' · ' + scopeClass.name : '') : (scopeClass ? scopeClass.name : 'keseluruhan sekolah');
+    const lines = tpList.map(tp => `${tp}: <span class="hl">${counts[tp]}</span> (${assessed > 0 ? Math.round(counts[tp] / assessed * 100) : 0}%)`);
+    return `Jumlah murid ${tpList.length === 6 ? 'TP1–TP6' : tpList.join(' dan ')} — ${scopeLabel} (${periodLabel} ${YEAR}):<br>• ${lines.join('<br>• ')}<br>• Jumlah dinilai: <span class="hl">${assessed}</span>`;
+  }
 
   // Jumlah murid / berapa murid
   if (/jumlah\s+murid|berapa\s+murid|bilangan\s+murid|total\s+murid|keseluruhan\s+murid/i.test(q)) {

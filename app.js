@@ -145,26 +145,83 @@ function buildMockData() {
 }
 buildMockData();
 
-async function loadLiveData() {
-  // Resolve available years and current year from the backend
-  const years = await apiFetch('years');
-  if (years && years.length) {
-    S.years = years;
-    if (!years.includes(S.year)) S.year = years[years.length - 1];
-    YEAR = S.year;
-    renderYearSelector();
+// ====== LOADING OVERLAY ======
+function showLoading(text) {
+  const ov = document.getElementById('loadOverlay');
+  const t = document.getElementById('loadText');
+  if (t && text) t.textContent = text;
+  if (ov) ov.style.display = 'flex';
+}
+function hideLoading() {
+  const ov = document.getElementById('loadOverlay');
+  if (ov) ov.style.display = 'none';
+}
+
+// ====== PER-YEAR CACHE (memory + localStorage) ======
+const YEAR_CACHE_PREFIX = 'pbd_cache_';
+let yearsLoaded = false;
+
+function getCachedYearData(yr) {
+  if (S.yearCache[yr]) return S.yearCache[yr];
+  try {
+    const raw = localStorage.getItem(YEAR_CACHE_PREFIX + yr);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.data && parsed.data.students && parsed.data.summaries) {
+        S.yearCache[yr] = parsed.data;
+        return parsed.data;
+      }
+    }
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
+function setCachedYearData(yr, data) {
+  S.yearCache[yr] = data;
+  try {
+    localStorage.setItem(YEAR_CACHE_PREFIX + yr, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch (e) { /* storage full — ignore */ }
+}
+
+function applyData(data) {
+  MOCK.classes = data.classes || MOCK.classes;
+  MOCK.students = data.students;
+  MOCK.summary = data.summaries;
+  MOCK.subjectList = data.subjectList;
+  MOCK.classSubjects = data.classSubjects;
+  MOCK.generatedAt = data.generatedAt;
+  MOCK.cached = { classes: MOCK.classes, students: MOCK.students, summary: MOCK.summary, subjectList: MOCK.subjectList, classSubjects: MOCK.classSubjects, generatedAt: MOCK.generatedAt };
+  S.dataSource = 'live';
+}
+
+// Load data for the current S.year. Uses per-year cache unless fresh=true.
+async function loadLiveData(fresh = false) {
+  // Resolve available years and current year from the backend (once)
+  if (!yearsLoaded) {
+    const years = await apiFetch('years');
+    if (years && years.length) {
+      S.years = years;
+      if (!years.includes(S.year)) S.year = years[years.length - 1];
+      YEAR = S.year;
+      renderYearSelector();
+    }
+    yearsLoaded = true;
   }
-  // Try single fullData call (optimized path)
-  const data = await apiFetch('fullData');
+
+  // Try the per-year cache first (instant year toggling)
+  if (!fresh) {
+    const cached = getCachedYearData(S.year);
+    if (cached) {
+      applyData(cached);
+      return true;
+    }
+  }
+
+  // Optimized single fullData call (with cache bypass when refreshing)
+  const data = await apiFetch('fullData', fresh ? { nocache: '1' } : {});
   if (data && data.students && data.summaries) {
-    MOCK.classes = data.classes || MOCK.classes;
-    MOCK.students = data.students;
-    MOCK.summary = data.summaries;
-    MOCK.subjectList = data.subjectList;
-    MOCK.classSubjects = data.classSubjects;
-    MOCK.generatedAt = data.generatedAt;
-    MOCK.cached = { classes: MOCK.classes, students: MOCK.students, summary: MOCK.summary, subjectList: MOCK.subjectList, classSubjects: MOCK.classSubjects, generatedAt: MOCK.generatedAt };
-    S.dataSource = 'live';
+    applyData(data);
+    setCachedYearData(S.year, data);
     return true;
   }
   // Fallback: fetch individual pieces
@@ -200,10 +257,15 @@ async function loadLiveData() {
 }
 
 (async () => {
-  const live = await loadLiveData();
-  setDataSourceUI();
-  MOCK.loaded = true;
-  renderPage(S.page);
+  showLoading('Memuatkan data tahun ' + YEAR + '...');
+  try {
+    const live = await loadLiveData();
+    setDataSourceUI();
+    MOCK.loaded = true;
+    renderPage(S.page);
+  } finally {
+    hideLoading();
+  }
 })();
 
 // Show clear indicator of whether the dashboard is showing live or demo data.
@@ -246,11 +308,16 @@ function setDataSourceUI() {
 async function reloadData() {
   const btn = document.querySelector('.sidebar-item[data-label="Muat Semula"]');
   if (btn) btn.style.opacity = '0.5';
-  S.dataSource = 'mock';
-  const live = await loadLiveData();
-  setDataSourceUI();
-  renderPage(S.page);
-  if (btn) btn.style.opacity = '1';
+  showLoading('Memuat semula data terkini...');
+  try {
+    S.dataSource = 'mock';
+    await loadLiveData(true);
+    setDataSourceUI();
+    renderPage(S.page);
+  } finally {
+    hideLoading();
+    if (btn) btn.style.opacity = '1';
+  }
 }
 
 // ====== APP STATE ======
@@ -263,7 +330,8 @@ const S = {
   kelas: null,
   studentSearch: '',
   dataSource: 'mock',
-  apiUrl: ''
+  apiUrl: '',
+  yearCache: {}
 };
 
 // ====== NAVIGATION ======
@@ -1370,9 +1438,14 @@ async function switchYear(yr) {
   S.year = yr;
   YEAR = yr;
   document.querySelectorAll('.yr-btn').forEach(b => b.classList.toggle('on', b.dataset.yr === yr));
-  const live = await loadLiveData();
-  setDataSourceUI();
-  renderPage(S.page);
+  showLoading('Memuatkan data tahun ' + yr + '...');
+  try {
+    await loadLiveData();
+    setDataSourceUI();
+    renderPage(S.page);
+  } finally {
+    hideLoading();
+  }
 }
 
 // ====== DATA SOURCE ======

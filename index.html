@@ -6,9 +6,18 @@
 <title>Dashboard PBD — SK Sungai Damit</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
+
+<!-- Full-screen loading overlay (year switch / reload / initial load) -->
+<div class="load-overlay" id="loadOverlay" style="display:none">
+  <div class="load-box">
+    <img src="logo-sk-sg-damit.png" alt="" class="load-logo" onerror="this.style.display='none'">
+    <div class="load-spinner"></div>
+    <div class="load-text" id="loadText">Memuatkan data...</div>
+  </div>
+</div>
 
 <!-- Sidebar -->
 <aside class="sidebar" id="sidebar">
@@ -150,6 +159,6 @@
   </div>
 </div>
 
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

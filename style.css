@@ -289,6 +289,33 @@ td { padding: 11px 16px; color: var(--text); font-weight: 500; white-space: nowr
 .spin { width: 38px; height: 38px; border: 3px solid var(--surface3); border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ============ LOADING OVERLAY ============ */
+.load-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(248, 249, 252, .82); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+}
+.load-box {
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 24px; padding: 36px 52px;
+  box-shadow: var(--shadow-lg);
+}
+.load-logo {
+  width: 92px; height: 92px; border-radius: 50%; object-fit: cover;
+  animation: load-bob 1.4s ease-in-out infinite;
+}
+.load-spinner {
+  width: 30px; height: 30px; border: 3px solid var(--surface3);
+  border-top-color: var(--primary); border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+.load-text { color: var(--text); font-weight: 700; font-size: 15px; }
+@keyframes load-bob {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-8px) scale(1.06); }
+}
+
 /* ============ MODAL ============ */
 .modal-overlay {
   display: none; position: fixed; inset: 0; z-index: 9999;

@@ -81,15 +81,19 @@ function cacheGet(key) {
 }
 
 function cachePut(key, obj) {
-  const json = JSON.stringify(obj);
-  const cache = CacheService.getScriptCache();
-  if (json.length <= 60000) {
-    cache.put(key, json, CACHE_TTL);
-    return;
+  try {
+    const json = JSON.stringify(obj);
+    const cache = CacheService.getScriptCache();
+    if (json.length <= 60000) {
+      cache.put(key, json, CACHE_TTL);
+      return;
+    }
+    const gz = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(json)).getBytes());
+    if (gz.length <= 90000) cache.put(key + '_gz', gz, CACHE_TTL);
+    // Too big for the script cache: skip server cache (frontend caches instead).
+  } catch (e) {
+    // Cache is best-effort — never let it break the response.
   }
-  const gz = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(json)));
-  if (gz.length <= 90000) cache.put(key + '_gz', gz, CACHE_TTL);
-  // Too big for the script cache: skip server cache (frontend caches instead).
 }
 
 // Pick the sheet for the requested year; default to the latest available.

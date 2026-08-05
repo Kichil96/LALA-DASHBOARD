@@ -1,8 +1,8 @@
 // SETUP: Map of year -> master data Sheet ID (from the share/edit URL).
 // Add a new entry each year; older years remain in history automatically.
 const YEAR_SHEETS = {
-  '2025': '1yMog1g-Ad6huk_QpflsFIE2s6kboMSv6w-YlJqbb0BQ'
-  // '2026': '<paste new sheet ID here>',
+  '2025': '1yMog1g-Ad6huk_QpflsFIE2s6kboMSv6w-YlJqbb0BQ',
+  '2026': '15y9gU2xsLRSujHeuNepWir5XmzaBTXgFOWkOTGtzi9Y'
 };
 
 const CLASS_SHEETS = [
